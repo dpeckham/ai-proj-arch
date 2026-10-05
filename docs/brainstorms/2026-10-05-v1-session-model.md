@@ -47,18 +47,43 @@ flowchart LR
 
 #### S1a. Should the work loop use Pi Durable?
 
-[Pi Durable](https://earendil.com/posts/pi-durable/) is an experimental framework released alongside Pi 1.0 for long-running agents. Every step of a run is checkpointed to SQLite or JSONL, so a new process can pick up a conversation after a crash. One harness runs many conversations, and any conversation can be forked. It runs on Node, locally or on [Cloudflare Durable Objects](https://developers.cloudflare.com/agents/harnesses/pi/).
+Researched Oct 5, 2026, from the [Pi Durable README](https://github.com/earendil-works/pi/tree/main/packages/durable), the [pi-ai README](https://github.com/earendil-works/pi/tree/main/packages/ai) and the [announcement](https://earendil.com/posts/pi-durable/).
 
-| | Plain script (S1 A) | Pi Durable |
-| --- | --- | --- |
-| Agents in background steps | Claude Code or Codex, headless | Pi Durable's own agent loop, calling models through `pi-ai` |
-| Same skills as the PM session | Yes | Needs its own extension for our skills. A third harness to keep in sync |
-| Recovering from a crash | Resumes at the **step** level: the loop reads GitHub on start and re-runs at most the interrupted step | Resumes **inside** a step, from the last checkpoint |
-| Maturity | Ours to build, small | "Experimental, and the API might still change" |
-| Adds to the container | Nothing | Node and npm packages |
-| Subagents | From the harness | "No built-in subagent support" |
+**What it is:** a TypeScript library (`@earendil-works/pi-durable`, MIT) for building durable agent apps. It is not a CLI you point at a repo. Every model turn and tool call is committed to SQLite or JSONL before anything is shown. If the process dies, reopening the storage resumes the work. It runs on Node 22.19 or newer, locally or on [Cloudflare](https://developers.cloudflare.com/agents/harnesses/pi/).
 
-**PM recommendation:** Start with the plain script. Because all state is on GitHub, the loop is already restartable at step boundaries, so Pi Durable's main benefit, resuming inside a step, buys little while steps are short. It would also turn the background agents into a third harness, which works against portability. Build the loop so each step goes through a small **runner** interface (Claude Code, Codex, later maybe Pi Durable). Revisit Pi Durable if steps get long enough that losing one hurts, or for the control plane, where durable orchestration across many projects is a better fit.
+**What maps well onto our work loop:**
+- **Child tasks** are almost exactly our story flow. A story task owns a Coder task, then waits on three review tasks with "all settled" or "fail fast", then decides. If a parent is aborted, its children are cleaned up first
+- **Steering:** you can send a message to a running agent ("use pnpm, not npm"), and it's applied after the current tool round. `claude -p` and `codex exec` can't be steered once started
+- **Watching:** a client can attach to a running conversation late and see it live. The PM could watch the Coder
+- **Task graph and usage:** a live view of every task, and tokens and cost per conversation. Both would be useful for status and later for budgets
+
+**What works against us:**
+
+| Concern | Detail |
+| --- | --- |
+| It replaces Claude Code and Codex in background steps | Agents run on Pi Durable's own loop and tools (read, write, edit, bash). We lose each harness's built-in tools, subagents, hooks and sandboxing, and portability becomes "Pi plus two others" |
+| Skills aren't built in | The Pi *coding agent* implements the Agent Skills spec, but the durable library doesn't load skills. We'd write an extension that loads `.agents/skills` |
+| Very early | The README says: "Experimental. The API changes without notice between releases." Pi 1.0.1, 1.0.2 and 1.0.3 shipped on Oct 3, 4 and 5 |
+| The loop becomes an app | A TypeScript program with npm dependencies, not "maybe just a script" |
+| Model access | Through `pi-ai`, which supports API keys and OAuth sign-in for Claude Pro/Max and ChatGPT subscriptions. Whether each provider's terms allow subscription use from a third-party harness needs checking before we rely on it |
+| Durability we already have | All state is on GitHub, so a plain loop that crashes re-reads GitHub and re-runs at most one step |
+
+**Options**
+
+| Option | What it means |
+| --- | --- |
+| **A. Plain script now, with a runner interface** (recommended) | Bash loop, steps run as `claude -p` or `codex exec`. A Pi runner can be added later behind the same interface |
+| B. Pi Durable as the engine for everything | Best durability, steering and observability. Biggest build, and gives up running background steps in Claude Code and Codex |
+| C. Pi Durable orchestrates, CLIs do the work | Pi Durable's task graph drives `claude -p` and `codex exec` as tool calls. Keeps the harnesses but loses steering and resuming inside a step, which are Pi Durable's best features, and still adds Node |
+
+**PM recommendation:** A for v1. Pi Durable is a strong fit for the *shape* of our loop, but adopting it now trades our main promise, the same roles on Claude Code and Codex, for durability GitHub already gives us. It also ties v1 to an API that changes daily.
+
+I'd change my mind if any of these turn out to be true:
+- Coder steps run long enough that losing one to a crash is expensive
+- Steering a running Coder becomes something you need often
+- We decide Pi itself should be the standard harness instead of Claude Code and Codex
+
+**Proposed follow-up:** after v1, run a time-boxed experiment with a Pi runner for one role (the Coder) on a real story, and compare it with the CLI runner on review rounds, crashes recovered and cost. Revisit Pi Durable for the control plane too, where a durable task graph across projects is a natural fit.
 
 **CEO:**
 
