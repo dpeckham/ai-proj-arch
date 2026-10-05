@@ -1,6 +1,6 @@
 # Spike: Portability (#1)
 
-Oct 5, 2026 · Status: **In progress**. The container section is done. Authentication, skills, headless runs and the bot token are still to test.
+Oct 5, 2026 · Status: **In progress**. Everything passes except the bot token, which needs the CEO to create the GitHub App and make one decision (see the end).
 
 Tracks [#1](https://github.com/dpeckham/ai-proj-arch/issues/1). Each result is **Pass**, **Fail**, or **Pass with a workaround**, with the commands used.
 
@@ -13,7 +13,7 @@ Tracks [#1](https://github.com/dpeckham/ai-proj-arch/issues/1). Each result is *
 | Image | `docker.io/library/debian:stable-slim` (arm64) |
 | tmux, git (container) | 3.5a, 2.47.3 |
 | Claude Code (container) | 2.1.289, official installer, as a non-root `agent` user |
-| Codex (container) | 0.160.1, `codex-aarch64-unknown-linux-musl` from GitHub releases |
+| Codex (container) | 0.160.1, the full `codex-package-aarch64-unknown-linux-musl` from GitHub releases, plus Debian's `bubblewrap` |
 
 **Setup note:** on first use, `container system start` asks to install a default kernel, which fails in a non-interactive shell. Run `container system start --enable-kernel-install`. Provisioning (#3) should check this and print that command.
 
@@ -53,22 +53,60 @@ host$ git -C …/mount/repo worktree list
 
 **Decision for #2 and #6:** the agents work from their **own clone on container storage**. The bind-mounted directory is a plain `main` checkout that only ever runs `git pull --ff-only` after a merge, and nothing creates worktrees from it.
 
-## Harness authentication (to test next, needs the CEO)
+## Harness authentication
 
-Researched in the official docs. Not yet tested in the container.
-
-| Harness | Proposed method | Notes |
+| # | Question | Result |
 | --- | --- | --- |
-| Claude Code | Run `claude setup-token` **on the host**, then pass the token into the container as `CLAUDE_CODE_OAUTH_TOKEN` | A one-year token that uses your subscription (Pro, Max, Team or Enterprise) and only makes model requests. Not read in `--bare` mode. ([docs](https://code.claude.com/docs/en/authentication)) |
-| Codex | `codex login --device-auth` **inside the container** | Device-code sign-in, with no browser needed in the container. Credentials go to `$CODEX_HOME/auth.json` on container storage, which survives a stop and start (C6). An API key is the alternative (`codex login --with-api-key`, or `CODEX_API_KEY`) |
+| A1 | Claude Code in the container without copying host credentials | **Pass.** The CEO ran `claude setup-token` on the host and saved the token to `~/.config/ai-proj-arch/spike.env` (folder 700, file 600) with `read -rs`, so it never echoed or reached shell history. It's passed per command with `container exec --env-file`. Nothing is stored in the container or the image. The token is never printed. It's a one-year subscription token that only makes model requests ([docs](https://code.claude.com/docs/en/authentication)) |
+| A2 | Codex in the container | **Pass.** `codex login --device-auth` inside the container; `codex login status` reports "Logged in using ChatGPT". Credentials are in `~/.codex/auth.json` on container storage, which survives a stop and start (C6) |
+| A3 | Missing auth makes a run fail clearly | **Pass.** Without credentials, `claude -p` and `codex exec` both exit 1 |
 
-**Secret handling to test:** the Claude token lives in a host file outside any repo (for example `~/.config/ai-proj-arch/<project>.env`, mode 600) and is passed with `container exec --env-file`. It must never be printed into a transcript, committed, or baked into an image.
+## Skills, instructions and subagents
 
-## Still to test
+| # | Question | Result |
+| --- | --- | --- |
+| S1 | Claude Code reads `AGENTS.md` through a `CLAUDE.md` containing only `@AGENTS.md` | **Pass.** It returned the marker that's defined only in `AGENTS.md` |
+| S2 | Codex reads `AGENTS.md` | **Pass** |
+| S3 | Claude Code finds skills through the `.claude/skills -> ../.agents/skills` symlink | **Pass.** The skill was listed and its content used |
+| S4 | Codex finds skills in `.agents/skills/` | **Pass with a workaround.** Codex lists the skill, but with its own sandbox (`read-only` or `workspace-write`) it **can't read files** inside `apple/container`, even though `bwrap` alone works. It answered "filesystem access failed". With `--sandbox danger-full-access` it works. Also, the bare `codex` binary is not enough: install the full `codex-package` (which includes `codex-code-mode-host`) and `bubblewrap` |
+| S5 | Subagents on both harnesses | **Pass, with different formats.** Claude Code reads `.claude/agents/<name>.md` (frontmatter plus instructions). Codex reads `.codex/agents/<name>.toml` (`name`, `description`, `developer_instructions`). Both delegated to a `lead-engineer` subagent. **Kit impact:** keep one source per subagent and have provisioning generate both files |
 
-- [ ] Authentication for both harnesses (above)
-- [ ] Skills: Claude Code through the `.claude/skills` symlink, Codex through `.agents/skills`, and `CLAUDE.md` importing `AGENTS.md`
-- [ ] Subagents on both harnesses
-- [ ] Headless runs: `claude -p` and `codex exec` exit statuses, flags for unattended use, and how the result is returned
-- [ ] Bot identity: `reviewer-setup` and `mint-token.sh` from dbaggott/claude-plugins, minting tokens on the host, and refreshing them before the roughly one-hour expiry
-- [ ] Dan's skills on Codex
+## Headless runs
+
+| # | Question | Result |
+| --- | --- | --- |
+| H1 | Unattended permissions | **Claude Code:** `--permission-mode bypassPermissions` works as the non-root `agent` user. An allowlist (`--allowedTools`) is **not** a boundary: under `acceptEdits` with only `git status` allowed, Claude still removed a file. **Codex:** `--sandbox danger-full-access` (see S4). **Decision:** inside the container, both harnesses run with full access, and **the container is the security boundary.** It holds only one repo and a short-lived token for that repo |
+| H2 | Exit status is trustworthy | **Only for crashes, not for task success.** In `workspace-write` mode Codex replied "Unable to create cx-ws.txt" and **still exited 0**. **Kit impact:** the work loop must never treat exit 0 as "done". It checks the result on GitHub (a PR exists, checks were posted) or in structured output |
+| H3 | Getting the result back | **Pass.** Claude Code: `--output-format json` (includes `total_cost_usd`, usage and `session_id`). Codex: `-o <file>` writes the last message, and `--json` streams events, including usage |
+| H4 | Gotcha | Claude Code's `--allowedTools` takes several values and swallowed a prompt placed after it. Always put the prompt first |
+| H5 | Gotcha | `container exec` looks up executables using the image's `PATH`, not `--env PATH`. Use absolute paths, or set `PATH` in the image |
+
+## Dan's plugins on Codex
+
+| # | Question | Result |
+| --- | --- | --- |
+| D1 | Do the skills load on Codex unchanged? | **Pass.** All of `coding-practices`, `git-workflow`, `issue-reviewer`, `issue-workflow`, `reviewer`, `reviewer-setup`, `velocity-tradeoff` and `work-summary` were listed. Codex read `git-workflow` and stated its worktree rule correctly. Tested at upstream commit `9a4c0b7` |
+| D2 | Do their helper scripts resolve? | **Pass, if we keep the layout.** The skills call `<skill-dir>/../../scripts/…`. Copying upstream `scripts/` to `.agents/scripts/` makes every path resolve unchanged |
+| D3 | Claude-only dependencies | A short list, from a grep of the skills: `AskUserQuestion` (5 places; in headless runs the runner pre-answers these in the prompt, as Dan's README describes), `run_in_background` for `watch-pr.sh` (1 place; our work loop does the waiting, so agents don't need to), `${CLAUDE_PLUGIN_ROOT}` (1 place, in `issue-workflow/references/resolving.md`), and `CLAUDE.md` mentions (wording only). The two enforcement hooks don't carry over; #5 replaces them with GitHub gates |
+| D4 | Tooling note | Copying files from macOS with `tar` adds `com.apple.provenance` xattr headers that GNU tar warns about. Provisioning should use `COPYFILE_DISABLE=1` or `--no-xattrs` |
+
+## Bot identity (needs the CEO)
+
+Dan's [`mint-token.sh`](https://github.com/dbaggott/claude-plugins/blob/main/dnbg-workflow/skills/reviewer/mint-token.sh) and `reviewer-setup` (`bootstrap.py`, `permissions.json`) are a strong fit:
+
+- The App's private key never leaves the host
+- It refuses credential files that are group- or world-writable
+- It can read the key from a secret manager command
+- It checks each minted token against a declared permission list
+
+Two changes are needed for us:
+
+1. **Scope each token to one repo.** Upstream mints for the whole installation. We'd pass `{"repositories": ["<repo>"]}` when minting. This is a small change, and a candidate to offer upstream
+2. **Deliver fresh tokens into the container.** Tokens expire after about an hour, and the key must stay on the host. The proposed design: a small **token broker** on the host, started by the `start` helper and kept running by `launchd`. It mints a token about every 45 minutes and writes it to a host file that is mounted read-only into the container. A `git` credential helper and a `gh` wrapper inside the container read that file on every call. If the broker stops, calls fail loudly when the token expires
+
+Also, `mint-token.sh` needs `jq`, `openssl` and `curl` on the host. That's acceptable for a script we reuse, but it differs from our "`gh` and `git` only" rule for provisioning.
+
+**Remaining steps:**
+- [ ] The CEO creates the bot App with `reviewer-setup` (a browser flow), then installs it on `yawnbooks` and `ai-proj-arch`
+- [ ] Test minting a token scoped to one repo, the broker file mount, and `gh` plus `git push` from the container as the bot
+- [ ] Confirm the bot can't reach other repos
