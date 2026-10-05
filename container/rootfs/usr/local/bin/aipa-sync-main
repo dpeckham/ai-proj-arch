@@ -1,0 +1,32 @@
+#!/bin/bash
+# Fast-forward the bind-mounted main checkout (/work/main) to GitHub's main, so
+# the CEO sees the latest merged code on the host. Only ever fast-forwards: it
+# refuses if the checkout is on another branch, has local changes, or diverged.
+set -euo pipefail
+
+# The overrides exist for tests; in the container the defaults always apply.
+MAIN=${AIPA_MAIN:-/work/main}
+PROJECT_FILE=${AIPA_PROJECT_FILE:-/run/aipa/project.env}
+
+repo=$(sed -n 's/^AIPA_REPO=\([A-Za-z0-9._-]*\/[A-Za-z0-9._-]*\)$/\1/p' "$PROJECT_FILE" 2>/dev/null || true)
+[ -n "$repo" ] || { echo "aipa-sync-main: no valid AIPA_REPO in $PROJECT_FILE" >&2; exit 1; }
+
+branch=$(git -C "$MAIN" symbolic-ref --quiet --short HEAD || true)
+[ "$branch" = main ] || { echo "aipa-sync-main: $MAIN is on '${branch:-detached HEAD}', not main; leaving it alone" >&2; exit 1; }
+if [ -n "$(git -C "$MAIN" status --porcelain --untracked-files=no)" ]; then
+  echo "aipa-sync-main: $MAIN has local changes; leaving it alone" >&2
+  exit 1
+fi
+
+before=$(git -C "$MAIN" rev-parse HEAD)
+# An explicit https URL: the host clone's own remote may be ssh, which the
+# container has no keys for. Also refresh origin/main so the host sees it.
+git -C "$MAIN" fetch --quiet "${AIPA_SYNC_REMOTE_URL:-https://github.com/${repo}.git}" "+refs/heads/main:refs/remotes/origin/main"
+git -C "$MAIN" merge --ff-only --quiet refs/remotes/origin/main
+after=$(git -C "$MAIN" rev-parse HEAD)
+
+if [ "$before" = "$after" ]; then
+  echo "main is up to date ($(git -C "$MAIN" rev-parse --short HEAD))"
+else
+  echo "main fast-forwarded $(git -C "$MAIN" rev-parse --short "$before")..$(git -C "$MAIN" rev-parse --short "$after")"
+fi

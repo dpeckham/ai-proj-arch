@@ -1,0 +1,239 @@
+#!/usr/bin/env bash
+# aipa: run an ai-proj-arch project in its own container.
+#
+#   aipa build-image [--no-cache]      build the agent image for this kit version
+#   aipa create <project> --repo <owner>/<name> [--main-dir <dir>]
+#                                      set up the host checkout, volume and container
+#   aipa start <project>               start the container and its token broker
+#   aipa shell <project>               open the PM's tmux session (starts if needed)
+#   aipa stop <project>                stop the container and its token broker
+#   aipa status <project>              show container, broker and token state
+#   aipa version
+#
+# `create` is the container part of provisioning; the full, idempotent
+# provisioning script (#3) builds on it.
+set -euo pipefail
+
+AIPA_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=../lib/aipa/common.sh
+. "$AIPA_ROOT/lib/aipa/common.sh"
+# shellcheck source=../lib/aipa/runtime.sh
+. "$AIPA_ROOT/lib/aipa/runtime.sh"
+# shellcheck source=../lib/aipa/broker.sh
+. "$AIPA_ROOT/lib/aipa/broker.sh"
+
+AGENT_USER=agent
+AGENT_HOME=/home/agent
+TOKEN_MAX_AGE=3000   # seconds; tokens live 3600, the broker renews at 2700
+
+usage() { sed -n '2,10p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+
+agent_workdir() { printf '%s/work/%s' "$AGENT_HOME" "$AIPA_REPO_NAME"; }
+
+# ---------------------------------------------------------------- build-image
+cmd_build_image() {
+  local nocache=0 args=() line
+  [ "${1:-}" = --no-cache ] && nocache=1
+  rt_require
+  while IFS= read -r line; do
+    case "$line" in
+      "" | \#*) ;;
+      [A-Z]*=*) args+=("$line") ;;
+      *) die "container/versions.env: unexpected line: $line" ;;
+    esac
+  done < "$AIPA_ROOT/container/versions.env"
+  info "building $(aipa_image_ref)"
+  rt_build_image "$(aipa_image_ref)" "$AIPA_ROOT/container" "$AIPA_ROOT/container/Containerfile" \
+    "$nocache" ${args[@]+"${args[@]}"}
+}
+
+# --------------------------------------------------------------------- create
+cmd_create() {
+  local project=${1:-} repo="" main_dir="" file existing name state
+  [ -n "$project" ] || die "usage: aipa create <project> --repo <owner>/<name> [--main-dir <dir>]"
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --repo) repo=${2:-}; shift 2 ;;
+      --main-dir) main_dir=${2:-}; shift 2 ;;
+      *) die "unknown option: $1" ;;
+    esac
+  done
+  aipa_validate_project "$project"
+  rt_require
+  file=$(aipa_project_file "$project")
+  aipa_private_dir "$AIPA_CONFIG_HOME"
+  aipa_private_dir "$AIPA_CONFIG_HOME/projects"
+  aipa_private_dir "$(aipa_project_dir "$project")"
+
+  if [ -r "$file" ]; then
+    existing=$(aipa_config_get "$file" AIPA_REPO)
+    [ -z "$repo" ] || [ "$repo" = "$existing" ] \
+      || die "project '$project' already uses $existing, not $repo"
+  else
+    [ -n "$repo" ] || die "--repo <owner>/<name> is required for a new project"
+    [ -n "$main_dir" ] || main_dir="$HOME/aipa/$project"
+    case "$main_dir" in /*) ;; *) main_dir="$PWD/$main_dir" ;; esac
+    printf 'AIPA_REPO=%s\nAIPA_MAIN_DIR=%s\n' "$repo" "$main_dir" | aipa_write_private_atomic "$file"
+    info "wrote $file"
+  fi
+  aipa_load_project "$project"
+
+  # Host checkout of main: plain, bind-mounted, fast-forwarded by the container.
+  if [ ! -d "$AIPA_MAIN_DIR/.git" ]; then
+    mkdir -p "$(dirname "$AIPA_MAIN_DIR")"
+    info "cloning $AIPA_REPO into $AIPA_MAIN_DIR"
+    gh repo clone "$AIPA_REPO" "$AIPA_MAIN_DIR" -- --quiet
+  fi
+
+  # Non-secret project facts the container reads from /run/aipa.
+  aipa_private_dir "$(aipa_run_dir "$project")"
+  printf 'AIPA_REPO=%s\n' "$AIPA_REPO" > "$(aipa_run_dir "$project")/project.env"
+  chmod 644 "$(aipa_run_dir "$project")/project.env"
+
+  rt_image_exists "$(aipa_image_ref)" || cmd_build_image
+  rt_volume_ensure "$(aipa_home_volume "$project")"
+
+  name=$(aipa_container_name "$project")
+  state=$(rt_container_state "$name")
+  if [ "$state" = absent ]; then
+    rt_create "$name" "$(aipa_image_ref)" "ai-proj-arch.project=$project" \
+      "$AIPA_MAIN_DIR:/work/main" \
+      "$(aipa_run_dir "$project"):/run/aipa:ro" \
+      "$(aipa_home_volume "$project"):$AGENT_HOME"
+    info "created container $name"
+  else
+    info "container $name already exists ($state)"
+  fi
+}
+
+# ---------------------------------------------------------------------- start
+bot_identity() {  # prints "<name>\t<email>"
+  local slug id cache
+  slug=$(jq -r '.slug // empty' "$AIPA_BOT_DIR/config.json" 2>/dev/null || true)
+  [ -n "$slug" ] || die "no bot App configured in $AIPA_BOT_DIR/config.json"
+  cache="$AIPA_BOT_DIR/bot-user-id"
+  if [ -s "$cache" ]; then
+    id=$(cat "$cache")
+  else
+    id=$(gh api "users/${slug}[bot]" --jq .id) || die "could not look up the user id of ${slug}[bot]"
+    printf '%s\n' "$id" > "$cache"
+  fi
+  printf '%s[bot]\t%s+%s[bot]@users.noreply.github.com\n' "$slug" "$id" "$slug"
+}
+
+cmd_start() {
+  local project=${1:-} name state started age identity bot_name bot_email workdir
+  [ -n "$project" ] || die "usage: aipa start <project>"
+  aipa_load_project "$project"
+  rt_require
+  name=$(aipa_container_name "$project")
+  state=$(rt_container_state "$name")
+  case "$state" in
+    absent) die "no container for '$project' (run: aipa create $project)" ;;
+    stopped) rt_start "$name"; info "started container $name" ;;
+    running) info "container $name is running" ;;
+  esac
+
+  # Token broker: reuse a fresh token, otherwise wait for a new one.
+  aipa_require_private_file "$AIPA_BOT_DIR/private-key.pem" "the bot App private key"
+  started=$(date +%s)
+  age=$(broker_token_age "$project")
+  if ! broker_running "$project" || [ -z "$age" ] || [ "$age" -gt "$TOKEN_MAX_AGE" ]; then
+    # (Re)load the launchd job; it mints immediately on load.
+    broker_install "$project"
+    info "token broker started (launchd: $(broker_label "$project"))"
+    broker_wait_for_token "$project" "$started" 60 \
+      || die "the token broker produced no token within 60s; see $AIPA_LOG_DIR/$project-broker.log"
+  fi
+
+  # The home volume is created empty and owned by root: hand it to the agent.
+  rt_exec "$name" root /root / sh -c "mkdir -p $AGENT_HOME/work && chown $AGENT_USER:$AGENT_USER $AGENT_HOME $AGENT_HOME/work"
+
+  identity=$(bot_identity)
+  bot_name=${identity%%$'\t'*}
+  bot_email=${identity#*$'\t'}
+  workdir=$(agent_workdir)
+  # shellcheck disable=SC2016  # expanded by the container's bash, from "$@"
+  rt_exec "$name" "$AGENT_USER" "$AGENT_HOME" "$AGENT_HOME" bash -euo pipefail -c '
+    git config --global user.name "$1"
+    git config --global user.email "$2"
+    if [ -d "$3/.git" ]; then
+      git -C "$3" fetch --quiet origin
+    else
+      git clone --quiet "https://github.com/$4.git" "$3"
+    fi
+    aipa-sync-main || true
+  ' _ "$bot_name" "$bot_email" "$workdir" "$AIPA_REPO"
+  info "agent clone: $workdir (in the container)"
+  info "main checkout on the host: $AIPA_MAIN_DIR"
+}
+
+# ---------------------------------------------------------------------- shell
+cmd_shell() {
+  local project=${1:-} name envf=""
+  [ -n "$project" ] || die "usage: aipa shell <project>"
+  aipa_load_project "$project"
+  name=$(aipa_container_name "$project")
+  if [ "$(rt_container_state "$name")" != running ] || ! broker_running "$project"; then
+    cmd_start "$project"
+  fi
+  if [ -f "$AIPA_HARNESS_ENV" ]; then
+    aipa_require_private_file "$AIPA_HARNESS_ENV" "the harness credentials file"
+    envf=$AIPA_HARNESS_ENV
+  else
+    warn "no $AIPA_HARNESS_ENV: Claude Code will ask you to log in (see docs/container.md)"
+  fi
+  # -A: attach if the session exists; -D: detach stale clients, such as one
+  # left behind by a terminal that was closed without detaching.
+  rt_exec_tty "$name" "$AGENT_USER" "$AGENT_HOME" "$(agent_workdir)" "$envf" \
+    tmux new-session -A -D -s pm -c "$(agent_workdir)"
+}
+
+# ----------------------------------------------------------------------- stop
+cmd_stop() {
+  local project=${1:-} name
+  [ -n "$project" ] || die "usage: aipa stop <project>"
+  aipa_load_project "$project"
+  name=$(aipa_container_name "$project")
+  if [ "$(rt_container_state "$name")" = running ]; then
+    rt_stop "$name"
+    info "stopped container $name"
+  fi
+  broker_uninstall "$project"
+  rm -f "$(aipa_run_dir "$project")/gh-token"
+  info "token broker stopped and token removed"
+}
+
+# --------------------------------------------------------------------- status
+cmd_status() {
+  local project=${1:-} age
+  [ -n "$project" ] || die "usage: aipa status <project>"
+  aipa_load_project "$project"
+  age=$(broker_token_age "$project")
+  printf 'project     %s (%s)\n' "$project" "$AIPA_REPO"
+  printf 'container   %s: %s\n' "$(aipa_container_name "$project")" "$(rt_container_state "$(aipa_container_name "$project")")"
+  printf 'image       %s\n' "$(aipa_image_ref)"
+  if broker_running "$project"; then printf 'broker      running\n'; else printf 'broker      not running\n'; fi
+  if [ -n "$age" ]; then printf 'token       %ss old\n' "$age"; else printf 'token       none\n'; fi
+  printf 'main        %s\n' "$AIPA_MAIN_DIR"
+}
+
+main() {
+  local cmd=${1:-help}
+  [ $# -gt 0 ] && shift
+  case "$cmd" in
+    build-image) cmd_build_image "$@" ;;
+    create) cmd_create "$@" ;;
+    start) cmd_start "$@" ;;
+    shell) cmd_shell "$@" ;;
+    stop) cmd_stop "$@" ;;
+    status) cmd_status "$@" ;;
+    broker) [ -n "${1:-}" ] || die "usage: aipa broker <project>"; broker_loop "$1" ;;
+    version) aipa_kit_version ;;
+    help | -h | --help) usage ;;
+    *) usage >&2; exit 2 ;;
+  esac
+}
+
+main "$@"

@@ -1,0 +1,38 @@
+{
+  "_comment": [
+    "The permissions a reviewer needs, declared once. bootstrap.py builds a new",
+    "App's manifest from it, and mint-token.sh checks every minted token against",
+    "it.",
+    "",
+    "`consequence` is printed to whoever hits a shortfall, so it is addressed to",
+    "them: what stops working, not why the permission exists.",
+    "ai-proj-arch change (from upstream commit 9a4c0b7): checks raised from read to write, so each reviewer role can post its own check run."
+  ],
+  "required": {
+    "pull_requests": "write",
+    "issues": "write",
+    "contents": "write",
+    "checks": "write",
+    "actions": "read",
+    "statuses": "read",
+    "metadata": "read"
+  },
+  "why": {
+    "pull_requests": "submit reviews, inline comments, thread replies",
+    "issues": "post and minimize the verdict comments of an issue-body review",
+    "contents": "read the diff; resolve threads; have the verdict counted at all",
+    "checks": "post one check run per reviewer role (review/qa, review/eng, review/ux)",
+    "actions": "checkSuite.workflowRun, which the rollup dereferences",
+    "statuses": "combined commit status, for CI that posts statuses instead of check runs",
+    "metadata": "mandatory"
+  },
+  "consequence": {
+    "pull_requests": "reviews and inline comments cannot be posted",
+    "issues": "an issue-body review cannot post its verdicts. Falling back to your own account instead deadlocks it silently \u2014 the author's watch excludes exactly that login, so it never wakes while both sides report a healthy watch.",
+    "contents": "reviews post but do not count \u2014 GitHub leaves a review by an App without this out of latestOpinionatedReviews, so reviewDecision never moves and the merge box ignores the verdict. Resolving a thread also fails.",
+    "checks": "reviewer roles cannot post their check runs, so the required review checks never pass",
+    "actions": "the rollup cannot dereference workflow runs",
+    "statuses": "CI that posts commit statuses instead of check runs is invisible",
+    "metadata": "nothing works"
+  }
+}
