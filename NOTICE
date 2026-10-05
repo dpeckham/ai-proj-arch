@@ -1,0 +1,8 @@
+ai-proj-arch
+Copyright 2026 Dave Peckham
+
+This product includes material adapted from dbaggott/claude-plugins
+(https://github.com/dbaggott/claude-plugins) by Dan Baggott and
+contributors, licensed under the Apache License, Version 2.0.
+Files adapted from that project say so in a header, along with the
+upstream commit they were taken from and a summary of changes.

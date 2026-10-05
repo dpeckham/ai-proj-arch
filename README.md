@@ -23,8 +23,8 @@ Instead of vibe coding, the founder (as CEO) works with a **Product Manager** fo
 ## Prior art
 
 - [Paperclip](https://github.com/paperclipai/paperclip): orchestration for teams of agents, with an org chart and governance
-- [dbaggott/claude-plugins](https://github.com/dbaggott/claude-plugins): a GitHub workflow for Claude Code built on worktrees, draft PRs and an independent bot reviewer
+- [dbaggott/claude-plugins](https://github.com/dbaggott/claude-plugins): a GitHub workflow for Claude Code built on worktrees, draft PRs and an independent bot reviewer. **We reuse as much of it as we can**, adapted to also run on Codex
 
 ## License
 
-[MIT](LICENSE)
+[Apache License 2.0](LICENSE). See [NOTICE](NOTICE) for attribution of adapted work.

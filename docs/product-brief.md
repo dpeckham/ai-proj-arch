@@ -49,6 +49,7 @@ The Lead Engineer and QA Lead both review PRs, but they look at different things
 7. **Every agent acts as the bot.** All agents act through one GitHub App, so their reviews are independent of the CEO's account. Only the CEO merges.
 8. **Autonomous between decisions.** Agents run unattended and stop only for decisions that belong to the CEO.
 9. **The project kit stands alone.** Everything a single project needs lives in the project. The control plane, when it comes, only adds a layer on top.
+10. **Reuse Dan's work wherever it fits.** The skills, scripts and reviewer-bot setup from [dbaggott/claude-plugins](https://github.com/dbaggott/claude-plugins) are the starting point. We vendor them at a pinned upstream commit, keep our changes small and marked, and offer portability fixes back upstream.
 
 ## Core loop and gates
 
@@ -218,3 +219,5 @@ v1 is done when one real project goes from a roadmap item to a merged PR with no
 | 2026-10-05 | Kit versions are semver tags. Projects are provisioned from a local clone, never `curl \| sh` | CEO |
 | 2026-10-05 | Provisioning doesn't start the container. `start` and `shell` helper commands do | CEO |
 | 2026-10-05 | The work loop is a plain script with a runner interface, not Pi Durable. Revisit Pi with a Coder-runner experiment after v1, and for the control plane | CEO |
+| 2026-10-05 | Relicense from MIT to Apache 2.0, to match dbaggott/claude-plugins and keep adapted files under one license. A NOTICE file credits adapted work | CEO |
+| 2026-10-05 | Reuse as much of dbaggott/claude-plugins as possible: vendor at a pinned commit, keep changes small, offer portability fixes upstream | CEO |
