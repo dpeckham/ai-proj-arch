@@ -171,7 +171,7 @@ v1 is done when one real project goes from a roadmap item to a merged PR with no
 
 **Open questions**
 
-- [ ] **Communication channel (needs a brainstorm).** How do the CEO, the Chief of Staff and the PMs talk to each other? This drives the design of the host script. Sub-questions:
+- [ ] **Communication channel.** How do the CEO, the Chief of Staff and the PMs talk to each other? This drives the design of the host script. Brainstorm in progress: [communication channel](brainstorms/2026-10-05-communication-channel.md). Sub-questions:
     - How does the CoS reach a PM inside its container: start a session in the container, comment on a GitHub issue, or read a status file the PM writes?
     - What triggers the daily report, and where does it land (terminal, a Markdown file, a notification)?
     - How does the CEO answer a question raised in the report and route it back to the right PM?
