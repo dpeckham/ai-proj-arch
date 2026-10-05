@@ -1,10 +1,10 @@
-# Product Brief: Solopreneur Agent Suite
+# Product Brief: ai-proj-arch
 
-Oct 5, 2026 · Dave Peckham · Status: Draft · Working name, not final
+Oct 5, 2026 · Dave Peckham · Status: Draft
 
 ## Summary
 
-A solo founder runs each AI-first project like a small company: they talk to a **Chief of Staff** and a **PM per project**, and a team of specialist agents plans, builds, tests and reviews the work autonomously through GitHub. The founder acts as **CEO**: they set direction, approve plans and merge.
+A solo founder runs each AI-first project like a small company: they talk to a **Chief of Staff** and a **PM per project**, and a team of specialist agents plans, builds, tests and reviews the work autonomously through GitHub. The founder acts as **CEO**: they set direction, approve the roadmap and merge. Story plans are approved by the PM, not the CEO.
 
 The suite is a set of portable agent definitions (skills, slash commands, tools) plus one host script. It runs on Claude Code and Codex, stores all state in GitHub, and isolates each project in its own container.
 
@@ -26,12 +26,12 @@ There is one human user, the solopreneur in the **CEO** role. Every other role i
 
 | Role | Where it runs | Owns | Reviews | Talks to |
 | --- | --- | --- | --- | --- |
-| CEO (human) | Host | Direction, roadmap approval, merging | Anything it chooses | CoS, PMs |
+| CEO (human) | Host | Direction, roadmap approval, merging (not story plans) | Anything it chooses | CoS, PMs |
 | Chief of Staff | Host, inside the main script | Cross-project status, priorities, what needs the CEO | Nothing; reads all project repos | CEO, every PM |
-| PM | Project container | Roadmap issue, epics, feature design, plans; decides when work starts | Plans against the roadmap | CEO, Lead Eng, QA, Designer, Coder |
+| PM | Project container | Roadmap issue, epics, feature design; approves story plans and decides when work starts | Plans against the roadmap | CEO, Lead Eng, QA, Designer, Coder |
 | Lead Engineer | Project container (consultant) | Technical approach in plans | PRs for design and correctness | PM, Coder |
 | QA Lead | Project container | Verification plan before work starts; tests | PRs for testability | PM, Coder |
-| UX/UI Designer | Project container (consultant) | Consistent look and feel, usability | PRs that change the UI | PM (ideation), Coder |
+| UX/UI Designer | Project container (consultant); skipped only for projects with no UI, which is rare | Consistent look and feel, usability | PRs that change the UI | PM (ideation), Coder |
 | Coder | Project container | Code and bug fixes | Nothing | PM, reviewers |
 
 The Lead Engineer and QA Lead both review PRs, but they look at different things: correctness and design versus testability.
@@ -43,7 +43,7 @@ The Lead Engineer and QA Lead both review PRs, but they look at different things
 3. **GitHub is the system of record.** The roadmap is an issue with a checklist, and so is each epic. Plans, verification plans, decisions and as-built records live in issues and PRs. We don't use GitHub Projects.
 4. **Gates live in GitHub, not in prompts.** Labels, required checks, branch protection and Actions enforce the process. That way every harness follows the same rules.
 5. **No verification plan, no start.** The PM doesn't dispatch work until the QA Lead has written how it will be verified.
-6. **One project, one repo, one container.** The container isolates the agents. The host keeps a live, read-only view of `main`.
+6. **One project, one repo, one container.** The container is `apple/container` on macOS or LXC on Linux, behind one interface; both are supported. The container isolates the agents. The host keeps a live, read-only view of `main`.
 7. **Every agent acts as the bot.** All agents act through one GitHub App, so their reviews are independent of the CEO's account. Only the CEO merges.
 8. **Autonomous between decisions.** Agents run unattended and stop only for decisions that belong to the CEO.
 
@@ -73,12 +73,12 @@ Three layers: the host runs the script and the Chief of Staff; each project runs
 
 ```mermaid
 flowchart TB
-    subgraph Host["Host (macOS)"]
+    subgraph Host["Host (macOS or Linux)"]
         S["Main script<br/>Chief of Staff runs here<br/>CEO talks to the CoS and PMs<br/>starts project containers"]
         CEO["CEO (human)<br/>brainstorms with each PM<br/>approves the roadmap<br/>merges PRs"]
         V["main checkouts<br/>one per project<br/>open in the CEO's editor"]
     end
-    subgraph Container["Project container, one per repo (LXC or apple/container)"]
+    subgraph Container["Project container, one per repo (apple/container or LXC)"]
         WT["Worktrees<br/>one per story, outside the mount"]
         MC["main checkout<br/>fast-forwards after each merge"]
         PM["PM session<br/>subagents: Lead Eng, QA planning, Designer"]
@@ -98,7 +98,9 @@ flowchart TB
     CEO -- "merges" --> GitHub
 ```
 
-Projects never talk to each other directly. The Chief of Staff sees across projects only by reading GitHub. Agents in a container hold a token for their own repo and nothing else.
+Projects never talk to each other directly. Agents in a container hold a token for their own repo and nothing else.
+
+**Not designed yet:** how the CEO, the Chief of Staff and the PMs talk to each other. The diagram shows the CoS reading GitHub, but the daily report (below) needs the CoS to check in with each PM. See the open questions.
 
 ## v1 scope
 
@@ -107,7 +109,7 @@ v1 is done when one real project goes from a roadmap item to a merged PR with no
 **Host script**
 
 - [ ] Create a project: repo, container, bot App installation, labels, issue templates, `main` mount
-- [ ] Start and stop a project's container and its agent sessions
+- [ ] Start and stop a project's container and its agent sessions, using `apple/container` on macOS and LXC on Linux behind one interface
 - [ ] Open a conversation with the Chief of Staff, or with a project's PM
 
 **Project container**
@@ -132,14 +134,14 @@ v1 is done when one real project goes from a roadmap item to a merged PR with no
 **Autonomous loop**
 
 - [ ] The PM plans with its consultants, gets the verification plan, dispatches the Coder, runs review rounds until all checks pass, then hands the merge to the CEO
-- [ ] The Chief of Staff writes a brief across projects: what's ready to merge, what's blocked, and which decisions are waiting
+- [ ] **Daily report:** the Chief of Staff checks in with each project's PM and gives the CEO one report: what shipped, what's ready to merge, what's blocked, and which decisions are waiting. This replaces the daily report Paperclip produces today
 
 ## Non-goals for v1
 
 - A web UI, dashboard or mobile app
 - GitHub Projects, or any tracker besides issues
 - Budgets, cost dashboards or spend limits (only a cap on review rounds)
-- Always-on heartbeats or scheduled agents running 24/7
+- Always-on heartbeats or agents running 24/7 (one scheduled daily report is in scope)
 - Multiple users, multiple organizations or RBAC
 - Agents merging PRs or deploying to production
 - Forges other than GitHub
@@ -164,15 +166,16 @@ v1 is done when one real project goes from a roadmap item to a merged PR with no
 | One bot identity can't count as several approvals in branch protection | QA, Eng and UX reviews collapse into one | Each reviewer role posts its own required check run, not a PR approval |
 | Git worktree metadata stores absolute paths | The `main` mount looks broken on the host | Keep worktrees outside the mounted path. The mount holds only a plain `main` checkout |
 | Agents with write tokens read untrusted text (issues, web pages, dependencies) | Prompt injection pushes malicious code or leaks secrets | Use a short-lived token scoped to one repo, no secrets in the container beyond that, and only the CEO merges |
+| Two container runtimes (`apple/container`, LXC) | Double the setup and test surface; behavior drifts between macOS and Linux | Keep the runtime interface small (create, start, stop, exec, mount), and run the v1 flow on both |
 | Autonomous review loops run without stopping | Wasted tokens, churn | Cap review rounds. Hitting the cap escalates to the PM, then the CEO |
 
 **Open questions**
 
-- [ ] Does the CEO approve each story's plan, or only the roadmap and the merge?
-- [ ] Which comes first, `apple/container` or LXC? Both share one interface in the script
-- [ ] Is the UX/UI Designer optional for projects with no UI?
-- [ ] Does the Chief of Staff read GitHub only when asked, or keep its own cross-project notes in an HQ repo?
-- [ ] What is the product called?
+- [ ] **Communication channel (needs a brainstorm).** How do the CEO, the Chief of Staff and the PMs talk to each other? This drives the design of the host script. Sub-questions:
+    - How does the CoS reach a PM inside its container: start a session in the container, comment on a GitHub issue, or read a status file the PM writes?
+    - What triggers the daily report, and where does it land (terminal, a Markdown file, a notification)?
+    - How does the CEO answer a question raised in the report and route it back to the right PM?
+    - Does the CoS keep its own cross-project notes, for example in an HQ repo?
 
 ## Decision log
 
@@ -186,3 +189,8 @@ v1 is done when one real project goes from a roadmap item to a merged PR with no
 | 2026-10-05 | Consultants (Lead Eng, QA planning, Designer) run as subagents. Coder and reviewers run as separate sessions | CEO, on PM recommendation |
 | 2026-10-05 | Lead Engineer review (correctness, design) is separate from QA review (testability) | CEO |
 | 2026-10-05 | Agents run autonomously between CEO decisions | CEO |
+| 2026-10-05 | The CEO approves the roadmap and merges. The PM approves story plans | CEO |
+| 2026-10-05 | v1 supports both `apple/container` and LXC | CEO |
+| 2026-10-05 | The UX/UI Designer is on by default, skipped only for projects with no UI | CEO |
+| 2026-10-05 | A daily report from the Chief of Staff, gathered from each PM, is in v1 scope | CEO |
+| 2026-10-05 | The product is named ai-proj-arch | CEO |
