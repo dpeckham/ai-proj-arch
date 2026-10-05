@@ -87,3 +87,24 @@ advance_remote() {
   echo 'AIPA_REPO=evil;touch /tmp/x' > "$AIPA_PROJECT_FILE"
   run "$BIN/aipa-sync-main"; [ "$status" -ne 0 ]; [[ "$output" == *"no valid AIPA_REPO"* ]]
 }
+
+@test "review check posts the right check run for the PR head" {
+  export AIPA_PROJECT_FILE="$BATS_TEST_TMPDIR/project.env"
+  echo 'AIPA_REPO=dpeckham/yawnbooks' > "$AIPA_PROJECT_FILE"
+  fake gh <<'EOF2'
+if [ "$1" = pr ]; then echo abc1234def; exit 0; fi
+echo "gh $*" >> "$FAKE_LOG"; cat >> "$FAKE_LOG"; echo posted
+EOF2
+  run "$BIN/aipa-review-check" qa 12 success "Testable" <<< "All paths covered"
+  [ "$status" -eq 0 ]
+  grep -q "gh api -X POST repos/dpeckham/yawnbooks/check-runs --input -" "$FAKE_LOG"
+  grep -q '"name": "review/qa"' "$FAKE_LOG"
+  grep -q '"head_sha": "abc1234def"' "$FAKE_LOG"
+  grep -q '"summary": "All paths covered"' "$FAKE_LOG"
+}
+
+@test "review check rejects bad arguments" {
+  run "$BIN/aipa-review-check" pm 12 success t; [ "$status" -eq 2 ]
+  run "$BIN/aipa-review-check" qa 1x success t; [ "$status" -eq 2 ]
+  run "$BIN/aipa-review-check" qa 12 approved t; [ "$status" -eq 2 ]
+}

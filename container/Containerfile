@@ -81,6 +81,7 @@ ENV DISABLE_AUTOUPDATER=1
 # Wrappers and helpers that connect the tools to the read-only /run/aipa mount.
 COPY rootfs/ /
 RUN chmod 755 /usr/local/bin/gh /usr/local/bin/git-credential-aipa /usr/local/bin/aipa-sync-main \
+      /usr/local/bin/aipa-review-check \
  && git config --system credential.https://github.com.helper /usr/local/bin/git-credential-aipa \
  && git config --system credential.https://github.com.useHttpPath false \
  && git config --system --add safe.directory /work/main \
