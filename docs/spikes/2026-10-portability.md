@@ -1,6 +1,6 @@
 # Spike: Portability (#1)
 
-Oct 5, 2026 · Status: **In progress**. Everything passes except the bot token, which needs the CEO to create the GitHub App and make one decision (see the end).
+Oct 5, 2026 · Status: **Done, pending two CEO settings changes** (see Bot identity → Open items).
 
 Tracks [#1](https://github.com/dpeckham/ai-proj-arch/issues/1). Each result is **Pass**, **Fail**, or **Pass with a workaround**, with the commands used.
 
@@ -90,23 +90,32 @@ host$ git -C …/mount/repo worktree list
 | D3 | Claude-only dependencies | A short list, from a grep of the skills: `AskUserQuestion` (5 places; in headless runs the runner pre-answers these in the prompt, as Dan's README describes), `run_in_background` for `watch-pr.sh` (1 place; our work loop does the waiting, so agents don't need to), `${CLAUDE_PLUGIN_ROOT}` (1 place, in `issue-workflow/references/resolving.md`), and `CLAUDE.md` mentions (wording only). The two enforcement hooks don't carry over; #5 replaces them with GitHub gates |
 | D4 | Tooling note | Copying files from macOS with `tar` adds `com.apple.provenance` xattr headers that GNU tar warns about. Provisioning should use `COPYFILE_DISABLE=1` or `--no-xattrs` |
 
-## Bot identity (needs the CEO)
+## Bot identity
 
-Dan's [`mint-token.sh`](https://github.com/dbaggott/claude-plugins/blob/main/dnbg-workflow/skills/reviewer/mint-token.sh) and `reviewer-setup` (`bootstrap.py`, `permissions.json`) are a strong fit:
+The bot is the existing **`dpeckham-bot`** App (App ID 5186605), named by the convention `<github-username>-bot`. A new private key was generated and is stored at `~/.config/ai-proj-arch/bot/private-key.pem` (folder 700, file 600). The download in `~/Downloads` was deleted. The key never enters a container. A throwaway App created earlier (`aipa-bot-dpeckham`) had its local key deleted. The CEO is deleting the App itself.
 
-- The App's private key never leaves the host
-- It refuses credential files that are group- or world-writable
-- It can read the key from a secret manager command
-- It checks each minted token against a declared permission list
+| # | Question | Result |
+| --- | --- | --- |
+| B1 | Mint an installation token on the host from the key | **Pass.** A JWT is signed with `openssl` and exchanged at `/app/installations/<id>/access_tokens`, following Dan's `mint-token.sh`. Tokens are captured into variables and never printed. They expire in 1 hour |
+| B2 | Scope a token to one repo | **Pass.** Minting with `{"repositories":["yawnbooks"]}` returns a token for that repo only. With it, a write to `my-ai-org` (in the same installation) gets `403 Resource not accessible by integration`, and so does a write to `ai-proj-arch` (not installed). Reads of **public** repos still work, as they do for anyone |
+| B3 | Deliver the token to the container without the key | **Pass.** The host writes the token to a file in a folder that's 700 on the host. Inside the container the file appears owned by `agent` (uid 1000) and is readable. A `:ro` bind mount is enforced: a write from the container fails with "Read-only file system" |
+| B4 | `git` and `gh` act as the bot | **Pass.** A credential helper reads the token file **on every call**, so a refreshed file takes effect without restarting anything. Clone, push of a test branch, `gh api` and `gh pr list` all worked as `dpeckham-bot[bot]`. The test branch was deleted |
+| B5 | Commit author shows the bot | Use the email `337727585+dpeckham-bot[bot]@users.noreply.github.com`. The number is the bot's **user** ID (`gh api 'users/dpeckham-bot[bot]' --jq .id`), not the App ID. Provisioning should look it up |
+| B6 | Agents can't change workflows | **Pass, and it's a gate.** Pushing a commit that adds `.github/workflows/x.yml` was rejected: "refusing to allow a GitHub App to create or update workflow … without `workflows` permission". **Consequence:** agents can't add or change CI. They propose workflow changes in a PR description or issue, and the CEO (or provisioning, which runs as the CEO) commits them |
 
-Two changes are needed for us:
+**Token broker (design confirmed by B3 and B4, built in #2):** a host process started by `start` mints a repo-scoped token about every 45 minutes and atomically replaces the file in the read-only mount. Containers never hold the key.
 
-1. **Scope each token to one repo.** Upstream mints for the whole installation. We'd pass `{"repositories": ["<repo>"]}` when minting. This is a small change, and a candidate to offer upstream
-2. **Deliver fresh tokens into the container.** Tokens expire after about an hour, and the key must stay on the host. The proposed design: a small **token broker** on the host, started by the `start` helper and kept running by `launchd`. It mints a token about every 45 minutes and writes it to a host file that is mounted read-only into the container. A `git` credential helper and a `gh` wrapper inside the container read that file on every call. If the broker stops, calls fail loudly when the token expires
+**Open items for the CEO**
+- [ ] `dpeckham-bot` has **Checks: read**. Reviewer roles need **Checks: write** to post `review/qa`, `review/eng` and `review/ux`. Change it in the App's permissions, then accept the request on the installation
+- [ ] The installation covers `yawnbooks` and `my-ai-org`, but not `ai-proj-arch`. Add `ai-proj-arch` if agents will work on this repo too
+- [ ] The App also has read access to security events and vulnerability alerts, which Paperclip used. That's harmless and useful for the OSV audit work. Keep it or remove it
 
-Also, `mint-token.sh` needs `jq`, `openssl` and `curl` on the host. That's acceptable for a script we reuse, but it differs from our "`gh` and `git` only" rule for provisioning.
+## Summary for #4 and #6
 
-**Remaining steps:**
-- [ ] The CEO creates the bot App with `reviewer-setup` (a browser flow), then installs it on `yawnbooks` and `ai-proj-arch`
-- [ ] Test minting a token scoped to one repo, the broker file mount, and `gh` plus `git push` from the container as the bot
-- [ ] Confirm the bot can't reach other repos
+1. Agents work from their own clone on container storage. The mounted `main` is a plain checkout that only fast-forwards (C5)
+2. Both harnesses run with full access **inside** the container. The container, holding one repo and a token for that repo only, is the boundary (S4, H1)
+3. Never trust exit 0. Check the outcome on GitHub (H2)
+4. Subagents need two generated formats, `.claude/agents/*.md` and `.codex/agents/*.toml` (S5)
+5. Copy upstream `scripts/` to `.agents/scripts/` so Dan's skills work unchanged (D2). Pre-answer `AskUserQuestion` decisions in runner prompts (D3)
+6. Codex needs its full package plus `bubblewrap`. Use absolute paths with `container exec` (S4, H5)
+7. Tokens are scoped to one repo, delivered through a read-only file, and refreshed by a host broker. Agents can't touch workflows (B2–B6)
