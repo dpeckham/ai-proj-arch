@@ -1,0 +1,28 @@
+# ai-proj-arch
+
+A lightweight, portable agent suite for solopreneurs who run AI-first projects.
+
+Instead of vibe coding, the founder (as CEO) works with a **Chief of Staff** and a **Product Manager** for each project. A team of agents does the rest: a Lead Engineer, a QA Lead, a UX/UI Designer and a Coder plan, build, verify and review the work through GitHub. Each project lives in its own repo and runs in its own container.
+
+**Status:** product definition. No code yet.
+
+## Design goals
+
+- **Portable:** roles are defined as skills, slash commands and tools that run on both Claude Code and Codex
+- **Minimal orchestration:** a single host script, with no server or dashboard
+- **GitHub as the system of record:** issues hold the roadmap, epics and stories; PRs carry review; Actions and branch protection enforce the gates
+- **No verification plan, no start:** QA defines how a story will be verified before any code is written
+- **Only the human merges**
+
+## Docs
+
+- [Product brief](docs/product-brief.md): problem, roles, core loop, architecture, v1 scope, risks and decisions
+
+## Prior art
+
+- [Paperclip](https://github.com/paperclipai/paperclip): orchestration for teams of agents, with an org chart and governance
+- [dbaggott/claude-plugins](https://github.com/dbaggott/claude-plugins): a GitHub workflow for Claude Code built on worktrees, draft PRs and an independent bot reviewer
+
+## License
+
+[MIT](LICENSE)
