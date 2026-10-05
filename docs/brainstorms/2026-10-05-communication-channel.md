@@ -19,7 +19,7 @@ sequenceDiagram
     participant HQ as HQ repo (Markdown)
     actor CEO
 
-    PM->>GH: Post status: shipped, ready to merge, blocked, questions for the CEO
+    PM->>GH: Commit STATUS.md: recently finished, blockers, coming up
     Note over CoS: Daily, on a host schedule
     CoS->>GH: Read each project's latest status, plus PRs and checks
     CoS->>HQ: Write the daily report (reports/YYYY-MM-DD.md)
@@ -49,7 +49,7 @@ That leads to the most important question in this brainstorm (Q1). It's now deci
     - **Project kit** (inside each repo and container): the PM and the other roles, the issue and PR formats, and the GitHub gates. Someone with one project can run the PM directly and stop there.
     - **Control plane** (on the host, optional): multiple projects, container lifecycle, the Chief of Staff, the daily report.
 2. **The PM runs the project.** Within a session, the PM picks the work, consults its subagents, and starts the Coder and reviewer sessions inside the container. The control plane never manages roles directly; it only starts the PM.
-3. **Sessions are short, containers are disposable.** A PM session runs until there's nothing left to do: everything is done, waiting on a review, or waiting on the CEO. Then it posts a status update and exits, and the control plane stops the container. Any state that must survive lives on GitHub or on the container's persistent disk, never in a session.
+3. **Sessions are short, containers are disposable.** A PM session runs until there's nothing left to do: everything is done, waiting on a review, or waiting on the CEO. Then it updates `STATUS.md` and exits, and the control plane stops the container. Any state that must survive lives on GitHub or on the container's persistent disk, never in a session.
 4. **The non-goal holds as written.** No agents run when there's no work.
 
 #### Q1a. Exec or ssh?
@@ -68,7 +68,7 @@ The control plane only needs cheap GitHub checks (no LLM) to decide whether a pr
 - A PR is merged, so the next story can start
 - A review or CI check finishes on an open PR
 - The roadmap or an epic changes
-- The daily report is due and the project's last status update is more than 24 hours old
+- The daily report is due and the project's `STATUS.md` is more than 24 hours old
 - You start one by hand
 
 **PM recommendation:** Accept this list. The host runs the checks every few minutes while the control plane is running. Without the control plane, you start the PM yourself.
@@ -83,21 +83,47 @@ For example, the Coder is still running, or a review just started.
 
 **CEO:**
 
-### Q2. Where does each PM post its status?
+### Q2. Where does each PM post its status? ✅ Decided
+
+**CEO:** Option C: a `STATUS.md` file. It always contains the work finished most recently, the current blockers, and what's coming up.
+
+**What this means for the design:** `STATUS.md` shows the **current** state and is overwritten on every update. Its git history is the log. The PM owns the file and the Chief of Staff only reads it. I've written it as `STATUS.md` to match `README.md` and `LICENSE`. The template:
+
+```markdown
+# Status: <project>
+
+Updated: 2026-10-05 14:20 UTC · PM session <id>
+
+## Recently finished
+- Story #12: export to CSV (PR #15, merged)
+
+## Blockers
+- **Needs CEO** (Q-3): Should exports include archived items? See #14
+- Waiting on review: PR #18, `review/qa` still running
+
+## Coming up
+- Story #16: import from CSV (verification plan approved)
+```
+
+A blocker that needs you gets an ID (`Q-3`) and links to the issue where the question is asked in full. That way your answer has a single place to go (Q6).
+
+#### Q2a. How does `STATUS.md` reach GitHub without breaking the gates?
+
+`main` is protected and only you merge. A status update every session can't wait for a PR, and letting the bot push straight to `main` would let it push anything.
 
 | Option | Trade-off |
 | --- | --- |
-| **A. A pinned "Status" issue per project, one comment per update** (recommended) | Keeps the roadmap issue clean, gives you a full history, easy for the CoS to find |
-| B. Comments on the roadmap issue | One fewer issue, but status gets mixed with roadmap discussion |
-| C. A `STATUS.md` file committed to the repo | Readable in your `main` mount, but every update is a commit, and it needs a PR or a bypass of the gates |
+| **A. A separate `status` branch that holds only `STATUS.md`** (recommended) | The bot pushes there freely, `main` stays fully protected, and the branch history is the status log. Downside: the file isn't in your `main` mount, so the control plane fetches it for you |
+| B. On `main`, with the bot allowed to bypass protection | Visible in the mount, but the bot could then push any change to `main`. That breaks "only the CEO merges" |
+| C. An untracked, gitignored file in the container's `main` checkout | Visible in your mount right away, but it's not on GitHub, there's no history, and a remote control plane can't read it without exec |
 
-**PM recommendation:** A. Each update uses a fixed template: Shipped, Ready to merge, In progress, Blocked, **Questions for the CEO** (each with an ID such as `Q-3`), and Risks.
+**PM recommendation:** A. The control plane also copies the latest `STATUS.md` from each project into the HQ repo, so you can read every project in one folder.
 
 **CEO:**
 
-### Q3. When does the PM post a status update?
+### Q3. When does the PM update `STATUS.md`?
 
-**PM recommendation (updated after Q1):** The PM posts a status update at the end of every session, plus mid-session if a PR becomes ready to merge or it raises a question for you. Before the daily report, the control plane starts a session for any project whose last update is more than 24 hours old.
+**PM recommendation (updated after Q1 and Q2):** The PM updates `STATUS.md` at the end of every session, and also mid-session if a PR becomes ready to merge or it raises a question for you. Before the daily report, the control plane starts a session for any project whose `STATUS.md` is more than 24 hours old.
 
 **CEO:**
 
@@ -146,4 +172,4 @@ The answer has to be verifiably **yours**. All agents share one bot identity, so
 ## Out of scope for this brainstorm
 
 - Which harness runs which role (part of the portability test)
-- Report contents beyond the sections listed in Q2 and Q5. We'll refine these once real reports exist
+- Report contents beyond the `STATUS.md` sections and the Q5 layout. We'll refine these once real reports exist
