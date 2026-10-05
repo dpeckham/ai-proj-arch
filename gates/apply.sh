@@ -66,8 +66,9 @@ required_checks() {
 ceo_bypass='[{"actor_id":'"$ADMIN_ROLE_ID"',"actor_type":"RepositoryRole","bypass_mode":"pull_request"}]'
 on_default_branch='{"ref_name":{"include":["~DEFAULT_BRANCH"],"exclude":[]}}'
 
-# Everyone, agents included, goes through a pull request with every check
-# green. Only the CEO may bypass, and only on a pull request, explicitly.
+# Everyone, the CEO included, goes through a pull request with every check
+# green. No bypass: the CEO's bypass on the other ruleset only lets them merge,
+# so the routine "bypass" click can never skip a red check.
 protect_main() {
   cat <<JSON
 {
@@ -75,7 +76,7 @@ protect_main() {
   "target": "branch",
   "enforcement": "active",
   "conditions": $on_default_branch,
-  "bypass_actors": $ceo_bypass,
+  "bypass_actors": [],
   "rules": [
     {"type": "deletion"},
     {"type": "non_fast_forward"},

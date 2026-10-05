@@ -22,6 +22,8 @@ Inside the session you're in the agent's clone of the repo. `claude` and `codex`
 | `aipa stop <project>` | Stops the container and the broker, and deletes the current token |
 | `aipa status <project>` | Shows the container, broker and token state |
 
+Inside the container, reviewer roles post their verdicts with `aipa-review-check` (see [gates.md](gates.md)).
+
 ## Before the first run
 
 - **`apple/container` installed and running:** `container system start --enable-kernel-install`. The first start installs a default kernel and fails if nothing can answer its prompt

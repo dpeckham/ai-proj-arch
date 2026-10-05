@@ -10,7 +10,7 @@
 # Use "neutral" for "not applicable", for example review/ux on a PR with no UI change.
 set -euo pipefail
 
-usage() { sed -n '6,9p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '7,10p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 [ $# -ge 4 ] || usage
 role=$1 pr=$2 conclusion=$3 title=$4 summary_file=${5:-}
 
