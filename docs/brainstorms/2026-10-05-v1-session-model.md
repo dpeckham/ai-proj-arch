@@ -1,6 +1,6 @@
 # Brainstorm: v1 session model
 
-Oct 5, 2026 · CEO + PM · Status: Mostly decided (S1 open)
+Oct 5, 2026 · CEO + PM · Status: Decided
 
 How a single project runs in v1: the CEO talks to the PM in one session, while other agents keep working in the background. Context: the [product brief](../product-brief.md).
 
@@ -43,7 +43,7 @@ flowchart LR
 
 **PM recommendation:** A. The PM (an LLM) decides *what* is ready: priorities, plan approval, verification plans. The script handles *how* it runs: the mechanics.
 
-**CEO:** A, or use the Pi Durable harness?
+**CEO:** A, or use the Pi Durable harness? (Resolved in S1a.)
 
 #### S1a. Should the work loop use Pi Durable?
 
@@ -85,7 +85,7 @@ I'd change my mind if any of these turn out to be true:
 
 **Proposed follow-up:** after v1, run a time-boxed experiment with a Pi runner for one role (the Coder) on a real story, and compare it with the CLI runner on review rounds, crashes recovered and cost. Revisit Pi Durable for the control plane too, where a durable task graph across projects is a natural fit.
 
-**CEO:**
+**CEO:** Plain script; it's easier. ✅
 
 ### S2. How does the work loop start the Coder and reviewers?
 

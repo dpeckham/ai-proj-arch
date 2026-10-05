@@ -140,7 +140,7 @@ v1 is done when one real project goes from a roadmap item to a merged PR with no
 **Autonomous loop**
 
 - [ ] When the PM wakes, it starts the work loop in the background and stays available to the CEO
-- [ ] The work loop is a plain script that runs one story at a time. Each step is a headless Claude Code or Codex run (`claude -p`, `codex exec`)
+- [ ] The work loop is a plain Bash script that runs one story at a time. Each step goes through a small runner interface so other engines can be added later. Each step is a headless Claude Code or Codex run (`claude -p`, `codex exec`)
 - [ ] The work loop runs the Coder and review rounds until all checks pass, then marks the PR ready for the CEO to merge
 - [ ] `STATUS.md` lives on a `status` branch. The work loop updates it after each step, and the PM updates "Coming up"
 - [ ] The PM answers "what's the status?" from GitHub, `STATUS.md` and the work loop's state
@@ -183,7 +183,6 @@ v1 is done when one real project goes from a roadmap item to a merged PR with no
 
 **Open questions**
 
-- [ ] **Work loop engine:** a plain script or Pi Durable (S1a in the [v1 session model brainstorm](brainstorms/2026-10-05-v1-session-model.md)).
 - [ ] **Communication channel for the control plane:** tabled until after v1. See [the brainstorm](brainstorms/2026-10-05-communication-channel.md).
 
 ## Decision log
@@ -218,3 +217,4 @@ v1 is done when one real project goes from a roadmap item to a merged PR with no
 | 2026-10-05 | Provisioning is written in Bash with `gh` and `git` | CEO |
 | 2026-10-05 | Kit versions are semver tags. Projects are provisioned from a local clone, never `curl \| sh` | CEO |
 | 2026-10-05 | Provisioning doesn't start the container. `start` and `shell` helper commands do | CEO |
+| 2026-10-05 | The work loop is a plain script with a runner interface, not Pi Durable. Revisit Pi with a Coder-runner experiment after v1, and for the control plane | CEO |
