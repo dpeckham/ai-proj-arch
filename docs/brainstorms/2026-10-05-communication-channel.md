@@ -35,21 +35,51 @@ I said this design means the host never touches a container. That's only half tr
 - **One-shot headless runs** (the host runs one command in the container, and the PM does one task and exits). This is easy, and both `apple/container` and LXC can do it.
 - **Live, interactive sessions** that the host has to broker. This is the hard part, and the proposal still avoids it.
 
-That leads to the most important question in this brainstorm (Q1).
+That leads to the most important question in this brainstorm (Q1). It's now decided; see below.
 
 ## Questions
 
-### Q1. What keeps the agents working when nobody is talking to them?
+### Q1. What keeps the agents working when nobody is talking to them? ✅ Decided
 
-"Autonomous" needs something to start the PM, Coder and reviewers when there's work to do. Today the brief doesn't say what that is.
+**CEO:** The app (control plane) starts the container and opens an agent session in it to run the PM, probably over ssh. If there's no work to do, the PM ends and the container can be stopped. Solopreneurs with a single project might not use the control plane at all, so the PM inside the project should do more of the work.
 
-| Option | How it works | Trade-off |
-| --- | --- | --- |
-| **A. Supervisor in each container** (recommended) | A small script in the container checks GitHub for changes (new comment, PR ready, check failed), with backoff, and starts the right role headless when something changed | Simple and portable. Idle checks cost only GitHub API calls, not tokens. It is a light heartbeat, so the non-goal would need rewording |
-| B. Host schedules everything | The host script starts each role in each container on a timer | Puts all control in one place, but the host has to know every role's state |
-| C. GitHub Actions trigger runs | Webhooks or Actions start agents on events | Fastest reaction, but agents would run on GitHub's runners instead of in your containers |
+**What this means for the design:**
 
-**PM recommendation:** A. Change the non-goal to "no always-on LLM sessions". A supervisor that polls GitHub is allowed.
+1. **Two layers, and the bottom one works without the top.**
+    - **Project kit** (inside each repo and container): the PM and the other roles, the issue and PR formats, and the GitHub gates. Someone with one project can run the PM directly and stop there.
+    - **Control plane** (on the host, optional): multiple projects, container lifecycle, the Chief of Staff, the daily report.
+2. **The PM runs the project.** Within a session, the PM picks the work, consults its subagents, and starts the Coder and reviewer sessions inside the container. The control plane never manages roles directly; it only starts the PM.
+3. **Sessions are short, containers are disposable.** A PM session runs until there's nothing left to do: everything is done, waiting on a review, or waiting on the CEO. Then it posts a status update and exits, and the control plane stops the container. Any state that must survive lives on GitHub or on the container's persistent disk, never in a session.
+4. **The non-goal holds as written.** No agents run when there's no work.
+
+#### Q1a. Exec or ssh?
+
+Both runtimes can run a command inside a container without ssh: `container exec` for `apple/container` and `lxc exec` for LXC. Exec means there's no ssh server or ssh keys in the container, so there's less to secure. ssh is only needed when the container runs on a **different machine** from the control plane, for example LXC on a Linux server while the control plane runs on your Mac.
+
+**PM recommendation:** Use runtime exec when the container is local, and ssh only for containers on another machine. Both sit behind the same "run in project" interface.
+
+**CEO:**
+
+#### Q1b. What makes the control plane start a PM session?
+
+The control plane only needs cheap GitHub checks (no LLM) to decide whether a project has work. It starts the PM when one of these happens:
+
+- You answer a question for that project
+- A PR is merged, so the next story can start
+- A review or CI check finishes on an open PR
+- The roadmap or an epic changes
+- The daily report is due and the project's last status update is more than 24 hours old
+- You start one by hand
+
+**PM recommendation:** Accept this list. The host runs the checks every few minutes while the control plane is running. Without the control plane, you start the PM yourself.
+
+**CEO:**
+
+#### Q1c. What happens when a PM session ends with work in flight?
+
+For example, the Coder is still running, or a review just started.
+
+**PM recommendation:** The PM doesn't end while a Coder or reviewer session it started is still running. It waits for them, then decides again. The control plane stops the container only after the PM exits. Stopping isn't deleting: the disk, worktrees and caches persist until the project is archived.
 
 **CEO:**
 
@@ -67,7 +97,7 @@ That leads to the most important question in this brainstorm (Q1).
 
 ### Q3. When does the PM post a status update?
 
-**PM recommendation:** The PM posts when something changes that you'd care about: a PR is ready to merge, work is blocked, or there's a question for you. If a project's last update is older than 24 hours when the report runs, the host asks that PM for a fresh one with a one-shot run.
+**PM recommendation (updated after Q1):** The PM posts a status update at the end of every session, plus mid-session if a PR becomes ready to merge or it raises a question for you. Before the daily report, the control plane starts a session for any project whose last update is more than 24 hours old.
 
 **CEO:**
 
