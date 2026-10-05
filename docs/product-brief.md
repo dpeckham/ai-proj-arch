@@ -114,6 +114,7 @@ v1 is done when one real project goes from a roadmap item to a merged PR with no
 - [ ] One idempotent script, run on the host as the CEO, that sets up a new project and updates an existing one: repo, labels, templates, ruleset, `status` branch, bot App check, kit files, host clone, image and container
 - [ ] Kit updates arrive as a PR the CEO merges. If a kit file was edited in the project, the script asks what to do (keep, overwrite, diff, save beside it)
 - [ ] Written in Bash with `gh` and `git`. No other host dependencies
+- [ ] Every run checks for a newer kit release and asks before updating, script first, then the project
 - [ ] Helper commands for daily use: `start` the container and open a `shell` attached to the PM's tmux session
 
 **Project container**
@@ -224,3 +225,4 @@ v1 is done when one real project goes from a roadmap item to a merged PR with no
 | 2026-10-05 | Reuse as much of dbaggott/claude-plugins as possible: vendor at a pinned commit, keep changes small, offer portability fixes upstream | CEO |
 | 2026-10-05 | Private projects require GitHub Pro (or Team) so the gates can be enforced. The CEO is upgrading. Found while testing on yawnbooks | CEO |
 | 2026-10-05 | yawnbooks is the first test project for provisioning. Its open issues and PRs from Paperclip stay as normal work for the new agents | CEO |
+| 2026-10-05 | Every run of the provision/update script checks for a newer kit release and asks before updating. It updates itself first, then the project | CEO |

@@ -137,6 +137,30 @@ The portability spike confirms that Claude Code follows the symlink.
 
 **CEO:** No; use helper commands. ✅
 
-## Scope note
+### P9. Checking for a new kit version ✅ Decided
+
+**CEO:** Whenever the install, update or provision script runs, it checks for a new version and asks if you want to update.
+
+**How it works:**
+
+1. **Check.** On every run, the script asks GitHub for the latest ai-proj-arch release tag (`git ls-remote --tags`) and compares it with the tag the local clone is on. If the check fails, for example offline, it prints a one-line warning and carries on with the current version.
+2. **Ask.** If a newer version exists, the script shows both versions and a link to the release notes:
+
+    ```text
+    ai-proj-arch v0.5.0 is available (you have v0.4.0).
+    Release notes: https://github.com/dpeckham/ai-proj-arch/releases/tag/v0.5.0
+    Update the kit before provisioning yawnbooks? [Y/n]
+    ```
+
+3. **Update the script itself first.** On yes, the script checks out the new tag in its own clone, then restarts itself with the same arguments, so the new version does the provisioning. It never runs one version's checks with another version's files.
+4. **Then update the project.** If the project's manifest is older than the kit, the normal update path runs: an update PR, with prompts for edited kit files (P4).
+
+**Rules:**
+- With no TTY or with `--dry-run`, the script never updates. It only reports that a newer version exists
+- `--no-update-check` skips the check, for offline use or CI
+- If the ai-proj-arch clone has local changes, the script refuses to switch versions and says why, instead of discarding them
+- The script only moves to a **release tag** from the clone's own `origin`, never a branch tip. Once releases are signed, it verifies the tag's signature before switching
+
+
 
 `apple/container` comes first. Everything here that touches the container goes behind the same small interface, so LXC can be added later without changing the rest.
