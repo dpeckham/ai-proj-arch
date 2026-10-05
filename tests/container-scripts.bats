@@ -108,3 +108,60 @@ EOF2
   run "$BIN/aipa-review-check" qa 1x success t; [ "$status" -eq 2 ]
   run "$BIN/aipa-review-check" qa 12 approved t; [ "$status" -eq 2 ]
 }
+
+# A bare remote with a main branch, and a clone to run aipa-status in.
+make_status_repos() {
+  export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
+  REMOTE="$BATS_TEST_TMPDIR/remote.git"
+  git init -q --bare -b main "$REMOTE"
+  git clone -q "$REMOTE" "$BATS_TEST_TMPDIR/a" 2>/dev/null
+  git -C "$BATS_TEST_TMPDIR/a" config user.name "dpeckham-bot[bot]"
+  git -C "$BATS_TEST_TMPDIR/a" commit -q --allow-empty -m init
+  git -C "$BATS_TEST_TMPDIR/a" push -q origin HEAD:main
+  export AIPA_STATUS_TEMPLATE="$ROOT/container/rootfs/usr/local/share/aipa/STATUS.md"
+}
+
+@test "status: first set creates the status branch from the template" {
+  make_status_repos
+  cd "$BATS_TEST_TMPDIR/a"
+  run "$BIN/aipa-status" set coming-up - <<< "- #4 Import from CSV"
+  [ "$status" -eq 0 ]; [[ "$output" == *"updated coming-up"* ]]
+  run "$BIN/aipa-status" show
+  [[ "$output" == *"- #4 Import from CSV"* ]]
+  [[ "$output" == *"- None."* ]]                      # other sections untouched
+  [[ "$output" == *"Updated: "*"dpeckham-bot[bot]"* ]]
+  [ "$(git -C "$REMOTE" log --format=%s status | wc -l | tr -d ' ')" = 1 ]
+  run git -C "$REMOTE" merge-base main status   # orphan: no history shared with main
+  [ "$status" -ne 0 ]
+  [ "$(git -C "$BATS_TEST_TMPDIR/a" worktree list | wc -l | tr -d ' ')" = 1 ]   # temp worktree removed
+}
+
+@test "status: two writers update different sections without losing either" {
+  make_status_repos
+  cd "$BATS_TEST_TMPDIR/a"
+  "$BIN/aipa-status" set coming-up - <<< "- planned work" >/dev/null
+  git clone -q "$REMOTE" "$BATS_TEST_TMPDIR/b"
+  git -C "$BATS_TEST_TMPDIR/b" config user.name loop
+  ( cd "$BATS_TEST_TMPDIR/b" && "$BIN/aipa-status" set blockers - <<< "- Q-1: needs CEO" >/dev/null )
+  "$BIN/aipa-status" set recently-finished - <<< "- #3 merged" >/dev/null   # a is now behind: must refetch
+  run "$BIN/aipa-status" show
+  [[ "$output" == *"- planned work"* ]]
+  [[ "$output" == *"- Q-1: needs CEO"* ]]
+  [[ "$output" == *"- #3 merged"* ]]
+}
+
+@test "status: setting the same content again changes nothing" {
+  make_status_repos
+  cd "$BATS_TEST_TMPDIR/a"
+  "$BIN/aipa-status" set blockers - <<< "- none" >/dev/null
+  run "$BIN/aipa-status" set blockers - <<< "- none"
+  [[ "$output" == *"unchanged"* ]]
+}
+
+@test "status: rejects unknown sections, empty content and markers" {
+  make_status_repos
+  cd "$BATS_TEST_TMPDIR/a"
+  run "$BIN/aipa-status" set roadmap - <<< "x";   [ "$status" -ne 0 ]
+  run "$BIN/aipa-status" set blockers - < /dev/null; [ "$status" -ne 0 ]
+  run "$BIN/aipa-status" set blockers - <<< "<!-- aipa:end blockers -->"; [ "$status" -ne 0 ]
+}
