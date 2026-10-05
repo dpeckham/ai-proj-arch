@@ -179,6 +179,7 @@ v1 is done when one real project goes from a roadmap item to a merged PR with no
 | Git worktree metadata stores absolute paths | The `main` mount looks broken on the host | Keep worktrees outside the mounted path. The mount holds only a plain `main` checkout |
 | Agents with write tokens read untrusted text (issues, web pages, dependencies) | Prompt injection pushes malicious code or leaks secrets | Use a short-lived token scoped to one repo, no secrets in the container beyond that, and only the CEO merges |
 | Autonomous review loops run without stopping | Wasted tokens, churn | Cap review rounds. Hitting the cap escalates to the PM, then the CEO |
+| GitHub only enforces rulesets and branch protection on private repos with a paid plan (Pro or Team) | On a free plan the bot can push straight to `main`, and every gate is advisory | Require GitHub Pro for private projects. Provisioning checks this first and stops if the gates can't be enforced |
 | Adding LXC after v1 exposes macOS-only assumptions | Rework when LXC arrives | Keep what the kit needs from the runtime small (create, start, exec, bind mount) and behind one interface from day one |
 | Provisioning overwrites a project's own changes | Lost work, distrust of updates | The manifest tracks checksums. The script asks before touching an edited kit file, and every update is a PR |
 
@@ -221,3 +222,5 @@ v1 is done when one real project goes from a roadmap item to a merged PR with no
 | 2026-10-05 | The work loop is a plain script with a runner interface, not Pi Durable. Revisit Pi with a Coder-runner experiment after v1, and for the control plane | CEO |
 | 2026-10-05 | Relicense from MIT to Apache 2.0, to match dbaggott/claude-plugins and keep adapted files under one license. A NOTICE file credits adapted work | CEO |
 | 2026-10-05 | Reuse as much of dbaggott/claude-plugins as possible: vendor at a pinned commit, keep changes small, offer portability fixes upstream | CEO |
+| 2026-10-05 | Private projects require GitHub Pro (or Team) so the gates can be enforced. The CEO is upgrading. Found while testing on yawnbooks | CEO |
+| 2026-10-05 | yawnbooks is the first test project for provisioning. Its open issues and PRs from Paperclip stay as normal work for the new agents | CEO |
