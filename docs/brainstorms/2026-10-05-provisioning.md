@@ -1,6 +1,6 @@
 # Brainstorm: Provisioning a project
 
-Oct 5, 2026 · CEO + PM · Status: Open
+Oct 5, 2026 · CEO + PM · Status: Decided
 
 How a project gets set up, and how it picks up new versions of the kit's skills, commands and scripts. Context: the [product brief](../product-brief.md).
 
@@ -31,7 +31,7 @@ Setting branch protection, rulesets and labels needs **admin** rights on the rep
 
 **PM recommendation:** It runs on the host with your own `gh` login. Agents in the container can't run it and don't hold credentials that could.
 
-**CEO:**
+**CEO:** OK. ✅
 
 ### P2. What does it ensure?
 
@@ -54,7 +54,7 @@ Setting branch protection, rulesets and labels needs **admin** rights on the rep
 - [ ] The container image, built or pulled at the kit's version
 - [ ] The project's container, with the `main` checkout bind-mounted
 
-**CEO:**
+**CEO:** OK. ✅
 
 ### P3. How do kit files get into the project repo?
 
@@ -66,11 +66,11 @@ Setting branch protection, rulesets and labels needs **admin** rights on the rep
 
 **PM recommendation:** A. The very first run on an empty repo commits straight to `main`, before the ruleset is switched on. Every later update opens a PR titled "Update ai-proj-arch kit to vX.Y.Z", which you merge.
 
-**CEO:**
+**CEO:** Yes. ✅
 
 ### P4. What if a project has edited a kit file?
 
-**PM recommendation:** The manifest (`.ai-proj-arch/manifest.json`) records the kit version and a checksum for each file the kit owns. On update:
+**PM recommendation:** The manifest (`.ai-proj-arch/manifest.txt`, see P6) records the kit version and a checksum for each file the kit owns. On update:
 
 | File state | What happens |
 | --- | --- |
@@ -81,7 +81,17 @@ Setting branch protection, rulesets and labels needs **admin** rights on the rep
 
 Project-specific settings go in files the kit never owns, such as `.ai-proj-arch/project.toml` (which harness each role uses, the review round cap, whether UX review is on). Edits to a kit file are the exception, not the way to customize.
 
-**CEO:**
+**CEO:** Ask the user interactively. ✅
+
+**What this means:** when a kit file has been edited in the project, the script stops and asks, one file at a time:
+
+```text
+.agents/skills/pm/SKILL.md was edited in this project (kit v0.3.0 -> v0.4.0)
+  [k] keep yours (default)   [o] overwrite with the kit version
+  [d] show the diff          [s] save the kit version beside it as SKILL.md.kit-new
+```
+
+Every choice is listed in the update PR. With no terminal attached (no TTY), or with `--dry-run`, the script never prompts: it keeps your version and reports the file.
 
 ### P5. How does one set of skills work on both harnesses?
 
@@ -94,7 +104,7 @@ I checked the Codex source: it loads repo skills from `.agents/skills/<name>/SKI
 
 The portability spike confirms that Claude Code follows the symlink.
 
-**CEO:**
+**CEO:** Symlinks are fine. ✅
 
 ### P6. What language is the script written in?
 
@@ -106,19 +116,26 @@ The portability spike confirms that Claude Code follows the symlink.
 
 **PM recommendation:** Python 3 with the standard library only. It calls `gh`, `git` and `container` as subprocesses. In this repo, Python is pinned with mise for development and tests.
 
-**CEO:**
+**CEO:** Bash, plus `gh` and `git`. ✅
+
+**What this means:** to keep the Bash script readable and testable:
+
+- **No `jq` dependency.** GitHub API calls use the `gh` CLI's built-in `--jq` filter. The manifest is a plain text file (`<sha256>  <path>` per line, plus a version line) instead of JSON, so it can be read with `while read` and diffed with git. The path changes to `.ai-proj-arch/manifest.txt`
+- **Works on macOS and Linux.** Checksums go through one helper that uses `shasum -a 256` on macOS and `sha256sum` on Linux. No GNU-only flags
+- **Structured as functions,** one `ensure_*` per item in P2, each one checking before it acts
+- **Quality bar:** `shellcheck` clean, with tests in [bats](https://github.com/bats-core/bats-core). Both are pinned with mise in this repo for development only. Users don't need them
 
 ### P7. How are kit versions chosen?
 
 **PM recommendation:** ai-proj-arch is released with semver tags. Provisioning runs from a local clone of ai-proj-arch at a tag, and writes that version into the project's manifest. It never runs as `curl … | sh`. Updating a project means checking out a newer tag and re-running the script.
 
-**CEO:**
+**CEO:** OK. ✅
 
 ### P8. Does provisioning also start the container?
 
 **PM recommendation:** No. Provisioning makes sure the image and container exist. The kit adds two small helper commands for daily use: `start`, which starts the container, and `shell`, which opens a shell and attaches to the PM's tmux session. You can still use `container exec` directly. The helpers just save typing.
 
-**CEO:**
+**CEO:** No; use helper commands. ✅
 
 ## Scope note
 

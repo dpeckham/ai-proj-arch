@@ -111,7 +111,9 @@ v1 is done when one real project goes from a roadmap item to a merged PR with no
 **Provisioning** (see [brainstorm](brainstorms/2026-10-05-provisioning.md))
 
 - [ ] One idempotent script, run on the host as the CEO, that sets up a new project and updates an existing one: repo, labels, templates, ruleset, `status` branch, bot App check, kit files, host clone, image and container
-- [ ] Kit updates arrive as a PR the CEO merges. Files the project has edited are never overwritten silently
+- [ ] Kit updates arrive as a PR the CEO merges. If a kit file was edited in the project, the script asks what to do (keep, overwrite, diff, save beside it)
+- [ ] Written in Bash with `gh` and `git`. No other host dependencies
+- [ ] Helper commands for daily use: `start` the container and open a `shell` attached to the PM's tmux session
 
 **Project container**
 
@@ -177,12 +179,11 @@ v1 is done when one real project goes from a roadmap item to a merged PR with no
 | Agents with write tokens read untrusted text (issues, web pages, dependencies) | Prompt injection pushes malicious code or leaks secrets | Use a short-lived token scoped to one repo, no secrets in the container beyond that, and only the CEO merges |
 | Autonomous review loops run without stopping | Wasted tokens, churn | Cap review rounds. Hitting the cap escalates to the PM, then the CEO |
 | Adding LXC after v1 exposes macOS-only assumptions | Rework when LXC arrives | Keep what the kit needs from the runtime small (create, start, exec, bind mount) and behind one interface from day one |
-| Provisioning overwrites a project's own changes | Lost work, distrust of updates | The manifest tracks checksums. Edited kit files are never overwritten, and every update is a PR |
+| Provisioning overwrites a project's own changes | Lost work, distrust of updates | The manifest tracks checksums. The script asks before touching an edited kit file, and every update is a PR |
 
 **Open questions**
 
 - [ ] **Work loop engine:** a plain script or Pi Durable (S1a in the [v1 session model brainstorm](brainstorms/2026-10-05-v1-session-model.md)).
-- [ ] **Provisioning:** P1–P8 in the [provisioning brainstorm](brainstorms/2026-10-05-provisioning.md).
 - [ ] **Communication channel for the control plane:** tabled until after v1. See [the brainstorm](brainstorms/2026-10-05-communication-channel.md).
 
 ## Decision log
@@ -210,3 +211,10 @@ v1 is done when one real project goes from a roadmap item to a merged PR with no
 | 2026-10-05 | `STATUS.md` lives on a `status` branch. The loop updates it after each step, and the PM updates "Coming up" | CEO |
 | 2026-10-05 | `apple/container` first. LXC comes after v1. Supersedes: v1 supports both | CEO |
 | 2026-10-05 | v1 includes an idempotent provisioning script that sets up a project and updates it to new kit versions | CEO |
+| 2026-10-05 | Provisioning runs on the host with the CEO's `gh` login. The bot never gets admin | CEO |
+| 2026-10-05 | Kit files are copied into the repo with a manifest. The first run commits directly, and later updates are PRs | CEO |
+| 2026-10-05 | If a kit file was edited in the project, provisioning asks the user interactively what to do | CEO |
+| 2026-10-05 | Skills live in `.agents/skills/`, and `.claude/skills` is a symlink to it | CEO |
+| 2026-10-05 | Provisioning is written in Bash with `gh` and `git` | CEO |
+| 2026-10-05 | Kit versions are semver tags. Projects are provisioned from a local clone, never `curl \| sh` | CEO |
+| 2026-10-05 | Provisioning doesn't start the container. `start` and `shell` helper commands do | CEO |
