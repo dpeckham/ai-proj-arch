@@ -16,6 +16,7 @@ Instead of vibe coding, the founder (as CEO) works with a **Product Manager** fo
 
 ## Docs
 
+- [Roadmap](https://github.com/dpeckham/ai-proj-arch/issues/7): v1 epics in order
 - [Product brief](docs/product-brief.md): problem, roles, core loop, architecture, v1 scope, risks and decisions
 - [Brainstorms](docs/brainstorms/): design discussions between the CEO and the PM (v1 session model, provisioning; the control plane is tabled)
 
