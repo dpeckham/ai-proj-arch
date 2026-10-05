@@ -1,0 +1,15 @@
+#!/bin/sh
+# gh wrapper for agent containers: authenticates as the project's bot using the
+# short-lived token the host broker keeps fresh in the read-only /run/aipa mount.
+# An explicit GH_TOKEN in the environment still wins.
+TOKEN_FILE=${AIPA_TOKEN_FILE:-/run/aipa/gh-token}
+GH_REAL=${AIPA_GH_REAL:-/usr/local/lib/aipa/gh/bin/gh}
+if [ -z "${GH_TOKEN:-}" ]; then
+  if [ -r "$TOKEN_FILE" ]; then
+    GH_TOKEN=$(cat "$TOKEN_FILE")
+    export GH_TOKEN
+  else
+    echo "gh: no bot token at $TOKEN_FILE. Is the host token broker running? (on the host: aipa status <project>)" >&2
+  fi
+fi
+exec "$GH_REAL" "$@"
