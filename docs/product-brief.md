@@ -226,3 +226,4 @@ v1 is done when one real project goes from a roadmap item to a merged PR with no
 | 2026-10-05 | Private projects require GitHub Pro (or Team) so the gates can be enforced. The CEO is upgrading. Found while testing on yawnbooks | CEO |
 | 2026-10-05 | yawnbooks is the first test project for provisioning. Its open issues and PRs from Paperclip stay as normal work for the new agents | CEO |
 | 2026-10-05 | Every run of the provision/update script checks for a newer kit release and asks before updating. It updates itself first, then the project | CEO |
+| 2026-10-05 | The bot GitHub App is named `<github-username>-bot` (for the CEO: the existing `dpeckham-bot`). One App per user, installed per project repo; scripts derive the name from the GitHub login | CEO |

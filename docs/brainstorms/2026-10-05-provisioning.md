@@ -43,7 +43,7 @@ Setting branch protection, rulesets and labels needs **admin** rights on the rep
 - [ ] Issue templates (Roadmap, Epic, Story) and the PR template
 - [ ] A ruleset on `main`: required checks (`review/qa`, `review/eng`, `review/ux`, CI), and only you can merge
 - [ ] A `status` branch with a starter `STATUS.md`
-- [ ] The bot GitHub App is installed on this repo. If it isn't, the script prints the install link. Installing an App on a personal account can't be scripted, so this step is checked, not done
+- [ ] The bot GitHub App is installed on this repo. If it isn't, the script prints the install link. Installing an App on a personal account can't be scripted, so this step is checked, not done. The App is named **`<github-username>-bot`** (for example `dpeckham-bot`), and scripts derive the name from `gh api user`. One App per user covers all of that user's projects, and each project is a separate installation
 
 **In the repo (the kit files)**
 - [ ] Role skills, slash commands, the work-loop script and the gate Actions
