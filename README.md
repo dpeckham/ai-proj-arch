@@ -17,7 +17,7 @@ Instead of vibe coding, the founder (as CEO) works with a **Product Manager** fo
 ## Docs
 
 - [Product brief](docs/product-brief.md): problem, roles, core loop, architecture, v1 scope, risks and decisions
-- [Brainstorms](docs/brainstorms/): design discussions between the CEO and the PM
+- [Brainstorms](docs/brainstorms/): design discussions between the CEO and the PM (v1 session model, provisioning; the control plane is tabled)
 
 ## Prior art
 

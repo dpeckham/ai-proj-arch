@@ -45,7 +45,7 @@ The Lead Engineer and QA Lead both review PRs, but they look at different things
 3. **GitHub is the system of record.** The roadmap is an issue with a checklist, and so is each epic. Plans, verification plans, decisions and as-built records live in issues and PRs. We don't use GitHub Projects.
 4. **Gates live in GitHub, not in prompts.** Labels, required checks, branch protection and Actions enforce the process. That way every harness follows the same rules.
 5. **No verification plan, no start.** The PM doesn't dispatch work until the QA Lead has written how it will be verified.
-6. **One project, one repo, one container.** The container is `apple/container` on macOS or LXC on Linux; both are supported. The container isolates the agents. The host keeps a live, read-only view of `main`.
+6. **One project, one repo, one container.** The container is `apple/container` on macOS first, then LXC on Linux, behind one small interface. The container isolates the agents. The host keeps a live, read-only view of `main`.
 7. **Every agent acts as the bot.** All agents act through one GitHub App, so their reviews are independent of the CEO's account. Only the CEO merges.
 8. **Autonomous between decisions.** Agents run unattended and stop only for decisions that belong to the CEO.
 9. **The project kit stands alone.** Everything a single project needs lives in the project. The control plane, when it comes, only adds a layer on top.
@@ -80,7 +80,7 @@ flowchart TB
         CEO["CEO (human)<br/>starts the container<br/>opens a shell with exec or ssh<br/>merges PRs on GitHub"]
         V["main checkout<br/>open in the CEO's editor"]
     end
-    subgraph Container["Project container (apple/container or LXC)"]
+    subgraph Container["Project container (apple/container; LXC later)"]
         PM["PM session (interactive)<br/>Claude Code or Codex<br/>brainstorm, status, roadmap<br/>subagents: Lead Eng, QA planning, Designer"]
         L["Work loop<br/>started by the PM when it wakes<br/>runs the next ready story"]
         W["Background sessions<br/>Coder · QA review · Eng review · UX review"]
@@ -108,10 +108,16 @@ The PM's interactive session stays free for the CEO: brainstorming, status quest
 
 v1 is done when one real project goes from a roadmap item to a merged PR with no human input other than the brainstorm and the merge, on both Claude Code and Codex.
 
+**Provisioning** (see [brainstorm](brainstorms/2026-10-05-provisioning.md))
+
+- [ ] One idempotent script, run on the host as the CEO, that sets up a new project and updates an existing one: repo, labels, templates, ruleset, `status` branch, bot App check, kit files, host clone, image and container
+- [ ] Kit updates arrive as a PR the CEO merges. Files the project has edited are never overwritten silently
+
 **Project container**
 
-- [ ] One image with Claude Code, Codex, `git` and `gh`
-- [ ] Documented steps to start it on `apple/container` and on LXC, with `main` bind-mounted to the host
+- [ ] One image with Claude Code, Codex, `git`, `gh` and `tmux`
+- [ ] Runs on `apple/container`, with `main` bind-mounted to the host. LXC comes after v1
+- [ ] Keeps running with nobody attached. Closing the terminal stops neither the PM session nor the work loop
 - [ ] Agents work only in worktrees. The `main` checkout fast-forwards after each merge
 - [ ] A short-lived installation token for the bot, scoped to that one repo
 
@@ -132,11 +138,14 @@ v1 is done when one real project goes from a roadmap item to a merged PR with no
 **Autonomous loop**
 
 - [ ] When the PM wakes, it starts the work loop in the background and stays available to the CEO
+- [ ] The work loop is a plain script that runs one story at a time. Each step is a headless Claude Code or Codex run (`claude -p`, `codex exec`)
 - [ ] The work loop runs the Coder and review rounds until all checks pass, then marks the PR ready for the CEO to merge
+- [ ] `STATUS.md` lives on a `status` branch. The work loop updates it after each step, and the PM updates "Coming up"
 - [ ] The PM answers "what's the status?" from GitHub, `STATUS.md` and the work loop's state
 
 ## Non-goals for v1
 
+- **LXC.** v1 runs on `apple/container` only
 - **The control plane:** several projects, the Chief of Staff, daily reports, starting and stopping containers automatically, an HQ repo
 - A web UI, dashboard or mobile app
 - GitHub Projects, or any tracker besides issues
@@ -155,8 +164,8 @@ v1 is done when one real project goes from a roadmap item to a merged PR with no
 | CEO actions per merged PR besides the merge | 0 typical, at most 1 | The team is really autonomous |
 | Review rounds before all checks pass | Tracked, with a hard cap | Shows whether plans and specs are good enough |
 | Bugs filed against a story within 14 days of merge | Tracked per project | Escaped defects show whether verification works |
-| v1 flow passes on Claude Code and on Codex | Both | Portability is real, not aspirational |
-| Steps from an empty repo to talking with the PM | Documented, few, and the same on both runtimes | Low overhead, unlike Paperclip |
+| v1 flow passes on Claude Code and on Codex, on `apple/container` | Both harnesses | Portability is real, not aspirational |
+| Commands from an empty repo to talking with the PM | Provision once, then start and shell | Low overhead, unlike Paperclip |
 
 ## Risks and open questions
 
@@ -167,11 +176,13 @@ v1 is done when one real project goes from a roadmap item to a merged PR with no
 | Git worktree metadata stores absolute paths | The `main` mount looks broken on the host | Keep worktrees outside the mounted path. The mount holds only a plain `main` checkout |
 | Agents with write tokens read untrusted text (issues, web pages, dependencies) | Prompt injection pushes malicious code or leaks secrets | Use a short-lived token scoped to one repo, no secrets in the container beyond that, and only the CEO merges |
 | Autonomous review loops run without stopping | Wasted tokens, churn | Cap review rounds. Hitting the cap escalates to the PM, then the CEO |
-| Two container runtimes (`apple/container`, LXC) | Double the setup and test surface; behavior drifts between macOS and Linux | Keep what the kit needs from the runtime small (start, exec, bind mount), and run the v1 flow on both |
+| Adding LXC after v1 exposes macOS-only assumptions | Rework when LXC arrives | Keep what the kit needs from the runtime small (create, start, exec, bind mount) and behind one interface from day one |
+| Provisioning overwrites a project's own changes | Lost work, distrust of updates | The manifest tracks checksums. Edited kit files are never overwritten, and every update is a PR |
 
 **Open questions**
 
-- [ ] **v1 session model:** how the PM runs the work loop in the background while staying available to the CEO. See [the brainstorm](brainstorms/2026-10-05-v1-session-model.md).
+- [ ] **Work loop engine:** a plain script or Pi Durable (S1a in the [v1 session model brainstorm](brainstorms/2026-10-05-v1-session-model.md)).
+- [ ] **Provisioning:** P1–P8 in the [provisioning brainstorm](brainstorms/2026-10-05-provisioning.md).
 - [ ] **Communication channel for the control plane:** tabled until after v1. See [the brainstorm](brainstorms/2026-10-05-communication-channel.md).
 
 ## Decision log
@@ -192,3 +203,10 @@ v1 is done when one real project goes from a roadmap item to a merged PR with no
 | 2026-10-05 | Two layers: a project kit that stands alone, and an optional control plane on top. The PM runs its own project | CEO |
 | 2026-10-05 | Each project has a `STATUS.md`: recently finished, blockers, coming up | CEO |
 | 2026-10-05 | **v1 is a single project with no control plane.** The CEO starts the container, opens a shell with exec or ssh, and talks to the PM. The PM starts background agents to keep working. Supersedes: the Chief of Staff runs on the host in v1, and the daily report is in v1 | CEO |
+| 2026-10-05 | Background steps are headless Claude Code or Codex runs, one process per step. The harness for each role is a project setting | CEO |
+| 2026-10-05 | The work loop runs one story at a time | CEO |
+| 2026-10-05 | Work must keep going after the CEO closes the terminal | CEO |
+| 2026-10-05 | The loop records blockers in `STATUS.md` and on the issue. The PM raises them the next time the CEO talks to it | CEO |
+| 2026-10-05 | `STATUS.md` lives on a `status` branch. The loop updates it after each step, and the PM updates "Coming up" | CEO |
+| 2026-10-05 | `apple/container` first. LXC comes after v1. Supersedes: v1 supports both | CEO |
+| 2026-10-05 | v1 includes an idempotent provisioning script that sets up a project and updates it to new kit versions | CEO |
