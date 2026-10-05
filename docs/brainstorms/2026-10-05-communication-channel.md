@@ -1,6 +1,8 @@
 # Brainstorm: Communication channel
 
-Oct 5, 2026 · CEO + PM · Status: Open
+Oct 5, 2026 · CEO + PM · Status: **Tabled until after v1**
+
+> **Tabled.** The CEO decided v1 is a single project with no control plane (see the [brief's decision log](../product-brief.md#decision-log)). Two decisions carry over into v1: the two-layer design with the PM running its own project (Q1), and `STATUS.md` (Q2). The rest of this doc waits for the control plane. The v1 questions moved to the [v1 session model brainstorm](2026-10-05-v1-session-model.md).
 
 How the CEO, the Chief of Staff (CoS) and each project's PM talk to each other, including the daily report. This is the last open question in the [product brief](../product-brief.md).
 
@@ -60,6 +62,8 @@ Both runtimes can run a command inside a container without ssh: `container exec`
 
 **CEO:**
 
+OK, exec. Keep it SSH-compatible though, for the future
+
 #### Q1b. What makes the control plane start a PM session?
 
 The control plane only needs cheap GitHub checks (no LLM) to decide whether a project has work. It starts the PM when one of these happens:
@@ -75,6 +79,8 @@ The control plane only needs cheap GitHub checks (no LLM) to decide whether a pr
 
 **CEO:**
 
+OK
+
 #### Q1c. What happens when a PM session ends with work in flight?
 
 For example, the Coder is still running, or a review just started.
@@ -82,6 +88,8 @@ For example, the Coder is still running, or a review just started.
 **PM recommendation:** The PM doesn't end while a Coder or reviewer session it started is still running. It waits for them, then decides again. The control plane stops the container only after the PM exits. Stopping isn't deleting: the disk, worktrees and caches persist until the project is archived.
 
 **CEO:**
+
+Yes, the PM is always “alive” and following the action.
 
 ### Q2. Where does each PM post its status? ✅ Decided
 
@@ -120,6 +128,8 @@ A blocker that needs you gets an ID (`Q-3`) and links to the issue where the que
 **PM recommendation:** A. The control plane also copies the latest `STATUS.md` from each project into the HQ repo, so you can read every project in one folder.
 
 **CEO:**
+
+Need to think more about this.
 
 ### Q3. When does the PM update `STATUS.md`?
 

@@ -2,7 +2,7 @@
 
 A lightweight, portable agent suite for solopreneurs who run AI-first projects.
 
-Instead of vibe coding, the founder (as CEO) works with a **Chief of Staff** and a **Product Manager** for each project. A team of agents does the rest: a Lead Engineer, a QA Lead, a UX/UI Designer and a Coder plan, build, verify and review the work through GitHub. Each project lives in its own repo and runs in its own container.
+Instead of vibe coding, the founder (as CEO) works with a **Product Manager** for each project. v1 covers a single project; a Chief of Staff across projects comes later. A team of agents does the rest: a Lead Engineer, a QA Lead, a UX/UI Designer and a Coder plan, build, verify and review the work through GitHub. Each project lives in its own repo and runs in its own container.
 
 **Status:** product definition. No code yet.
 
@@ -17,6 +17,7 @@ Instead of vibe coding, the founder (as CEO) works with a **Chief of Staff** and
 ## Docs
 
 - [Product brief](docs/product-brief.md): problem, roles, core loop, architecture, v1 scope, risks and decisions
+- [Brainstorms](docs/brainstorms/): design discussions between the CEO and the PM
 
 ## Prior art
 
