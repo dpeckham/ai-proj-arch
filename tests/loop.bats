@@ -115,7 +115,8 @@ EOF2
 cat > /dev/null; echo '{"result":"REPORT-TEXT"}'
 EOF2
   fake timeout <<'EOF2'
-shift; exec "$@"
+while [ "${1#-}" != "$1" ]; do shift; done   # options such as --kill-after=60
+shift; exec "$@"                             # the duration
 EOF2
   p="$BATS_TEST_TMPDIR/prompt"; echo hi > "$p"
   out=$(run_agent coder coder-1 "$p" 2>/dev/null)
