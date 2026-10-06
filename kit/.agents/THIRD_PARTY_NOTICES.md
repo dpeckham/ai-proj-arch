@@ -12,6 +12,6 @@ licensed under the Apache License, Version 2.0 (full text: `LICENSE.dnbg`).
 | `skills/coding-practices/` | Modified. Changes marked "ai-proj-arch:" |
 | `skills/velocity-tradeoff/` | Modified. Changes marked "ai-proj-arch:" |
 | `skills/aipa-review-round/` | Derived from upstream `skills/reviewer/` |
-| `scripts/fetch-tree.sh`, `fetch-pr-state.sh`, `pr-round.sh`, `lib-activity.sh`, `pr-threads.sh`, `pr-sources.sh` | Unmodified |
+| `scripts/fetch-tree.sh`, `fetch-pr-state.sh`, `pr-round.sh`, `pr-verdict.sh`, `lib-activity.sh`, `pr-threads.sh`, `pr-sources.sh` | Unmodified (`pr-verdict.sh` only because `pr-round.sh` calls it; its review-based verdict is not used) |
 
 The rest of the kit is part of ai-proj-arch, also licensed under Apache 2.0.

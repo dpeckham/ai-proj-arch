@@ -117,3 +117,14 @@ new_repo() { git init -q -b main "$1"; }
   bad=$(printf '%s\n' "$output" | grep -vE 'never|Never|don.t|isn.t|not |no |No |won.t' || true)
   [ -z "$bad" ] || { echo "$bad"; false; }
 }
+
+@test "every script a shipped script calls is shipped too" {
+  cd "$ROOT/kit/.agents/scripts"
+  for s in *.sh; do
+    code=$(grep -vE '^[[:space:]]*#' "$s")   # comments may mention other scripts
+    for dep in $(printf '%s\n' "$code" | grep -oE '[a-z-]+\.sh' | sort -u); do
+      [ "$dep" = "$s" ] && continue
+      [ -f "$dep" ] || { echo "$s needs $dep"; false; }
+    done
+  done
+}
