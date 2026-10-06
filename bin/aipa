@@ -8,6 +8,8 @@
 #   aipa shell <project>               open the PM's tmux session (starts if needed)
 #   aipa stop <project>                stop the container and its token broker
 #   aipa status <project>              show container, broker and token state
+#   aipa loop <project> [start|status|stop|step]
+#                                      control the work loop in the container
 #   aipa version
 #
 # `create` is the container part of provisioning; the full, idempotent
@@ -26,7 +28,7 @@ AGENT_USER=agent
 AGENT_HOME=/home/agent
 TOKEN_MAX_AGE=3000   # seconds; tokens live 3600, the broker renews at 2700
 
-usage() { sed -n '2,10p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,12p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
 agent_workdir() { printf '%s/work/%s' "$AGENT_HOME" "$AIPA_REPO_NAME"; }
 
@@ -219,6 +221,22 @@ cmd_status() {
   printf 'main        %s\n' "$AIPA_MAIN_DIR"
 }
 
+# ----------------------------------------------------------------------- loop
+cmd_loop() {
+  local project=${1:-} sub=${2:-status} name envargs=()
+  [ -n "$project" ] || die "usage: aipa loop <project> [start|status|stop|step]"
+  case "$sub" in start | status | stop | step) ;; *) die "unknown loop command: $sub" ;; esac
+  aipa_load_project "$project"
+  name=$(aipa_container_name "$project")
+  if [ "$sub" = start ] || [ "$sub" = step ]; then
+    if [ "$(rt_container_state "$name")" != running ] || ! broker_running "$project"; then cmd_start "$project"; fi
+    aipa_require_private_file "$AIPA_HARNESS_ENV" "the harness credentials file"
+    envargs=(--env-file "$AIPA_HARNESS_ENV")
+  fi
+  "$AIPA_RUNTIME_BIN" exec ${envargs[@]+"${envargs[@]}"} --user "$AGENT_USER" --env "HOME=$AGENT_HOME" \
+    --workdir "$(agent_workdir)" "$name" aipa-loop "$sub"
+}
+
 main() {
   local cmd=${1:-help}
   [ $# -gt 0 ] && shift
@@ -229,6 +247,7 @@ main() {
     shell) cmd_shell "$@" ;;
     stop) cmd_stop "$@" ;;
     status) cmd_status "$@" ;;
+    loop) cmd_loop "$@" ;;
     broker) [ -n "${1:-}" ] || die "usage: aipa broker <project>"; broker_loop "$1" ;;
     version) aipa_kit_version ;;
     help | -h | --help) usage ;;

@@ -127,6 +127,11 @@ kit_install() {  # <kit-dir> <repo-dir>
 
   kit_render_agents "$kit/agents" "$repo" || return 1
   kit_merge_agents_md "$kit/AGENTS.kit.md" "$repo/AGENTS.md" || return 1
+  # Project settings are the project's: created once, never overwritten.
+  if [ ! -f "$repo/.ai-proj-arch/project.toml" ]; then
+    mkdir -p "$repo/.ai-proj-arch"
+    cp "$kit/.ai-proj-arch/project.toml" "$repo/.ai-proj-arch/project.toml"
+  fi
   if [ ! -f "$repo/CLAUDE.md" ]; then
     cp "$kit/CLAUDE.md" "$repo/CLAUDE.md"
   elif ! grep -qx '@AGENTS.md' "$repo/CLAUDE.md"; then

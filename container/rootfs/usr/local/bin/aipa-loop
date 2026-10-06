@@ -1,0 +1,469 @@
+#!/bin/bash
+# aipa-loop: the work loop. Moves stories from state:verification-ready to "ready
+# for the CEO to merge", one story at a time, by running the Coder and the
+# reviewer roles as headless agent runs.
+#
+#   aipa-loop start     start in the background (the PM does this on waking)
+#   aipa-loop run       run in the foreground
+#   aipa-loop step      take one action, then exit (debugging)
+#   aipa-loop status    what the loop is doing and its recent runs
+#   aipa-loop stop      stop a running loop
+#
+# Everything it decides comes from GitHub, so it is restartable: after a crash
+# or a container restart it re-reads the state and re-runs at most one step.
+# It never trusts an agent's exit status; it checks the result on GitHub.
+#
+# Settings live in the project's .ai-proj-arch/project.toml on main:
+#   [harness]  coder / qa / eng / ux = "claude" | "codex"   (default "claude")
+#   [loop]     review_rounds = 3                            (fix rounds before blocking)
+set -euo pipefail
+
+STATE_DIR=${AIPA_LOOP_DIR:-$HOME/.aipa/loop}
+RUNS_DIR=$STATE_DIR/runs
+LOCK_FILE=$STATE_DIR/lock
+PID_FILE=$STATE_DIR/pid
+LOG_FILE=$STATE_DIR/loop.log
+PROJECT_FILE=${AIPA_PROJECT_FILE:-/run/aipa/project.env}
+POLL=${AIPA_LOOP_POLL:-120}
+MAX_WAIT=${AIPA_LOOP_MAX_WAIT:-43200}
+RUN_TIMEOUT=${AIPA_LOOP_RUN_TIMEOUT:-3600}
+ROLES="qa eng ux"
+READY=state:verification-ready
+
+# Logs go to stderr, so functions whose stdout is captured can still log.
+log() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >&2; }
+die() { echo "aipa-loop: $*" >&2; exit 1; }
+
+load_repo() {
+  REPO=$(sed -n 's/^AIPA_REPO=\([A-Za-z0-9._-]*\/[A-Za-z0-9._-]*\)$/\1/p' "$PROJECT_FILE" 2>/dev/null || true)
+  [ -n "$REPO" ] || die "no valid AIPA_REPO in $PROJECT_FILE"
+  WORK=${AIPA_LOOP_WORKDIR:-$HOME/work/${REPO#*/}}
+}
+
+# ------------------------------------------------------------------ config
+# A tiny reader for the TOML subset we use: [section] headers and key = "value"
+# or key = number lines. Read from origin/main, so only merged settings apply.
+CONFIG=""
+load_config() {
+  CONFIG=$(git -C "$WORK" show origin/main:.ai-proj-arch/project.toml 2>/dev/null || true)
+}
+config_get() {  # <section> <key> <default>
+  local v
+  v=$(printf '%s\n' "$CONFIG" | awk -v s="[$1]" -v k="$2" '
+    /^[ \t]*\[/ { gsub(/[ \t]/, ""); cur = $0; next }
+    cur == s {
+      line = $0; sub(/#.*/, "", line)
+      n = index(line, "=")
+      if (n) {
+        key = substr(line, 1, n - 1); gsub(/[ \t]/, "", key)
+        val = substr(line, n + 1); gsub(/^[ \t]+|[ \t]+$/, "", val); gsub(/^"|"$/, "", val)
+        if (key == k) { print val; exit }
+      }
+    }')
+  printf '%s' "${v:-$3}"
+}
+harness_for() {  # <role>
+  local h
+  h=$(config_get harness "$1" claude)
+  case "$h" in claude | codex) printf '%s' "$h" ;; *) die "unknown harness '$h' for $1 in project.toml" ;; esac
+}
+
+# ---------------------------------------------------------------- decide
+# Pure: reads S_* facts, prints one action. Kept free of I/O so it's testable.
+#   S_STORY       story number in flight or next up ("" when none)
+#   S_NEEDS_CEO   1 if the story is labeled needs-ceo
+#   S_PR, S_DRAFT the story's open PR and whether it is a draft
+#   S_GATE        gate/verification-plan on the PR head: success|failure|pending|""
+#   S_REVIEW_qa, S_REVIEW_eng, S_REVIEW_ux   conclusions on the PR head ("" = not yet)
+#   S_ROUNDS, S_CAP   review rounds with a failure so far, and the cap
+decide() {
+  local role c failed=0 var
+  [ -n "${S_STORY:-}" ] || { echo idle; return; }
+  [ "${S_NEEDS_CEO:-0}" = 1 ] && { echo "wait-ceo blocked"; return; }
+  [ -n "${S_PR:-}" ] || { echo implement; return; }
+  [ "${S_DRAFT:-0}" = 1 ] && { echo implement; return; }   # an interrupted Coder run: continue it
+  case "${S_GATE:-}" in
+    failure) echo "block gate/verification-plan failed on the PR"; return ;;
+    success) ;;
+    *) echo "wait-checks gate"; return ;;
+  esac
+  for role in $ROLES; do
+    var="S_REVIEW_$role"; c=${!var:-}
+    case "$c" in
+      "") echo "review $role"; return ;;
+      failure) failed=1 ;;
+      success | neutral) ;;
+      *) echo "review $role"; return ;;   # anything else (cancelled, stale): review again
+    esac
+  done
+  if [ "$failed" = 1 ]; then
+    if [ "${S_ROUNDS:-0}" -ge "${S_CAP:-3}" ]; then
+      echo "block review rounds reached the cap (${S_CAP:-3}) with findings still open"
+    else
+      echo fix
+    fi
+    return
+  fi
+  echo "wait-merge"
+}
+
+# --------------------------------------------------------------- GitHub
+story_labels() { gh issue view "$1" --repo "$REPO" --json labels --jq '[.labels[].name] | join(" ")'; }
+
+set_state() {  # <story> <state:...>
+  local cur l args=()
+  cur=$(story_labels "$1")
+  for l in $cur; do
+    case "$l" in state:*) [ "$l" = "$2" ] || args+=(--remove-label "$l") ;; esac
+  done
+  case " $cur " in *" $2 "*) ;; *) args+=(--add-label "$2") ;; esac
+  [ ${#args[@]} -eq 0 ] || gh issue edit "$1" --repo "$REPO" "${args[@]}" >/dev/null
+}
+
+# Story numbers in Roadmap -> Epic checklist order, then any others by number.
+story_order() {
+  local roadmap epics ordered=() n e owner=${REPO%%/*} name=${REPO#*/}
+  refs() {  # issue numbers referenced on checklist lines of a body, in order
+    grep -E '^[[:space:]]*[-*][[:space:]]+\[[ xX]\]' \
+      | grep -oE "(https://github.com/$owner/$name/issues/|#)[0-9]+" \
+      | grep -oE '[0-9]+$' || true
+  }
+  roadmap=$(gh issue list --repo "$REPO" --label roadmap --state open --json body --jq '.[0].body // ""')
+  epics=$(printf '%s\n' "$roadmap" | refs)
+  for e in $epics; do
+    for n in $(gh issue view "$e" --repo "$REPO" --json body --jq '.body // ""' 2>/dev/null | refs); do
+      ordered+=("$n")
+    done
+  done
+  printf '%s\n' ${ordered[@]+"${ordered[@]}"}
+}
+
+# Fill the S_* facts for the story in flight, or the next one up.
+snapshot() {
+  local stories inflight n labels prjson sha checks
+  S_STORY="" S_NEEDS_CEO=0 S_PR="" S_DRAFT=0 S_GATE="" S_ROUNDS=0 S_HEAD=""
+  S_REVIEW_qa="" S_REVIEW_eng="" S_REVIEW_ux=""
+  S_CAP=$(config_get loop review_rounds 3)
+
+  stories=$(gh issue list --repo "$REPO" --label story --state open --limit 200 \
+    --json number,labels --jq '.[] | "\(.number) \([.labels[].name] | join(","))"')
+  inflight=$(printf '%s\n' "$stories" | grep -E 'state:(in-progress|in-review)' | head -n 1 | cut -d' ' -f1 || true)
+  if [ -n "$inflight" ]; then
+    S_STORY=$inflight
+  else
+    for n in $(story_order) $(printf '%s\n' "$stories" | cut -d' ' -f1 | sort -n); do
+      labels=$(printf '%s\n' "$stories" | awk -v n="$n" '$1 == n { print $2 }')
+      case ",$labels," in *",$READY,"*) S_STORY=$n; break ;; esac
+    done
+  fi
+  [ -n "$S_STORY" ] || return 0
+  labels=$(printf '%s\n' "$stories" | awk -v n="$S_STORY" '$1 == n { print $2 }')
+  case ",$labels," in *,needs-ceo,*) S_NEEDS_CEO=1 ;; esac
+
+  prjson=$(gh pr list --repo "$REPO" --state open --limit 100 \
+    --json number,isDraft,headRefOid,closingIssuesReferences \
+    --jq "[.[] | select(any(.closingIssuesReferences[]; .number == $S_STORY))] | first // empty")
+  [ -n "$prjson" ] || return 0
+  S_PR=$(printf '%s' "$prjson" | jq -r .number)
+  S_DRAFT=$(printf '%s' "$prjson" | jq -r 'if .isDraft then 1 else 0 end')
+  sha=$(printf '%s' "$prjson" | jq -r .headRefOid)
+  S_HEAD=$sha
+  checks=$(head_checks "$sha")
+  S_GATE=$(printf '%s\n' "$checks" | awk '$1 == "gate/verification-plan" { print $2 }')
+  S_REVIEW_qa=$(printf '%s\n' "$checks" | awk '$1 == "review/qa" { print $2 }')
+  S_REVIEW_eng=$(printf '%s\n' "$checks" | awk '$1 == "review/eng" { print $2 }')
+  S_REVIEW_ux=$(printf '%s\n' "$checks" | awk '$1 == "review/ux" { print $2 }')
+  S_ROUNDS=$(failed_rounds "$S_PR")
+}
+
+# "<name> <conclusion|pending>" for the latest run of each check on a commit.
+head_checks() {  # <sha>
+  gh api "repos/$REPO/commits/$1/check-runs?per_page=100" --jq '
+    .check_runs | group_by(.name) | map(max_by(.started_at)) | .[]
+    | "\(.name) \(if .status == "completed" then .conclusion else "pending" end)"'
+}
+
+# Rounds = commits on the PR where at least one review/* check failed.
+failed_rounds() {  # <pr>
+  local sha count=0
+  for sha in $(gh api "repos/$REPO/pulls/$1/commits?per_page=100" --jq '.[].sha'); do
+    if head_checks "$sha" | grep -qE '^review/[a-z]+ failure$'; then count=$((count + 1)); fi
+  done
+  echo "$count"
+}
+
+# The newest commit on the PR (other than the head) that has a check for this
+# role, and when it completed: what a reviewer last looked at.
+last_reviewed() {  # <pr> <role>  -> "<sha> <completed_at>" or ""
+  local sha
+  for sha in $(gh api "repos/$REPO/pulls/$1/commits?per_page=100" --jq '[.[].sha] | reverse | .[]'); do
+    [ "$sha" = "$S_HEAD" ] && continue
+    gh api "repos/$REPO/commits/$sha/check-runs?check_name=review/$2" \
+      --jq ".check_runs | max_by(.completed_at) // empty | \"$sha \(.completed_at)\"" | grep . && return 0
+  done
+  return 0
+}
+
+# ------------------------------------------------------------- blockers
+blockers_to_status() {
+  local lines
+  lines=$(gh issue list --repo "$REPO" --label needs-ceo --state open --json number,title \
+    --jq ".[] | \"- https://github.com/$REPO/issues/\(.number) \(.title)\"")
+  [ -n "$lines" ] || lines="- None."
+  printf '%s\n' "$lines" | aipa-status set blockers - >/dev/null || log "could not update STATUS.md blockers"
+}
+
+block() {  # <story> <reason> [details-file]
+  local body
+  case " $(story_labels "$1") " in *" needs-ceo "*) return 0 ;; esac
+  # shellcheck disable=SC2016  # backticks are Markdown, not command substitution
+  body=$(printf '**[LOOP]** Blocked: %s\n\nThe work loop has stopped on this story. Remove the `needs-ceo` label once it is resolved, and the loop will pick it up again.\n' "$2")
+  if [ -n "${3:-}" ] && [ -s "$3" ]; then
+    body=$(printf '%s\n\n<details><summary>Last agent report</summary>\n\n%s\n\n</details>\n' "$body" "$(tail -n 60 "$3")")
+  fi
+  gh issue comment "$1" --repo "$REPO" --body "$body" >/dev/null
+  gh issue edit "$1" --repo "$REPO" --add-label needs-ceo >/dev/null
+  log "blocked story #$1: $2"
+  blockers_to_status
+}
+
+# --------------------------------------------------------- recently finished
+note_finished() {
+  local prev state title line
+  prev=$(cat "$STATE_DIR/current" 2>/dev/null || true)
+  [ -n "$prev" ] && [ "$prev" != "${S_STORY:-}" ] || return 0
+  state=$(gh issue view "$prev" --repo "$REPO" --json state,title --jq '.state + " " + .title')
+  title=${state#* }
+  case "$state" in
+    CLOSED*)
+      line="- https://github.com/$REPO/issues/$prev $title (merged $(date -u +%Y-%m-%d))"
+      { printf '%s\n' "$line"; grep -v "/issues/$prev " "$STATE_DIR/finished" 2>/dev/null || true; } \
+        | head -n 10 > "$STATE_DIR/finished.tmp" && mv "$STATE_DIR/finished.tmp" "$STATE_DIR/finished"
+      aipa-status set recently-finished "$STATE_DIR/finished" >/dev/null || log "could not update STATUS.md recently finished"
+      log "story #$prev finished"
+      ;;
+  esac
+}
+
+# ------------------------------------------------------------- agent runs
+run_agent() {  # <role-for-harness> <tag> <prompt-file>  -> report path on stdout
+  local role=$1 tag=$2 prompt=$3 harness base
+  harness=$(harness_for "$role")
+  base="$RUNS_DIR/$(date -u +%Y%m%dT%H%M%SZ)-$tag-$harness"
+  cp "$prompt" "$base.prompt"
+  log "run $tag on $harness (log: $base.log)"
+  printf 'running %s on %s since %s\n' "$tag" "$harness" "$(date -u +%H:%M)" > "$STATE_DIR/activity"
+  case "$harness" in
+    claude)
+      timeout --kill-after=60 "$RUN_TIMEOUT" claude -p --permission-mode bypassPermissions --output-format json \
+        < "$prompt" > "$base.log" 2>&1 || true
+      jq -r '.result // empty' "$base.log" > "$base.report" 2>/dev/null || cp "$base.log" "$base.report"
+      ;;
+    codex)
+      timeout --kill-after=60 "$RUN_TIMEOUT" codex exec --sandbox danger-full-access -o "$base.report" - \
+        < "$prompt" > "$base.log" 2>&1 || true
+      ;;
+  esac
+  rm -f "$STATE_DIR/activity"
+  printf '%s' "$base.report"
+}
+
+prompt_implement() {
+  cat <<EOF
+You are the Coder for this project. Load and follow the aipa-coder skill.
+
+Work loop run (id: $RUN_ID), mode 1: implement the story https://github.com/$REPO/issues/$S_STORY.
+The work loop has already claimed it and moved it to state:in-progress, so skip claiming.
+If an open pull request for this story already exists (for example a draft left by an interrupted run), continue on it instead of opening another.
+This run is non-interactive. End with your three-section report.
+EOF
+}
+
+prompt_fix() {  # <since-iso>
+  cat <<EOF
+You are the Coder for this project. Load and follow the aipa-coder skill.
+
+Work loop run (id: $RUN_ID), mode 2: address the review round on https://github.com/$REPO/pull/$S_PR (story https://github.com/$REPO/issues/$S_STORY).
+The head you last pushed: $S_HEAD. Round started at: $1.
+This run is non-interactive. Push once at the end of the round, then end with your three-section report.
+EOF
+}
+
+prompt_review() {  # <role> <last-sha> <since-iso>
+  cat <<EOF
+You are a reviewer on this project, role: $1. Load and follow the aipa-review-round skill and your role's skill.
+
+Work loop run (id: $RUN_ID): one review round on https://github.com/$REPO/pull/$S_PR.
+You last reviewed at: ${2:-none (first round)}. Round started at: $3.
+This run is non-interactive. Post your findings and your review/$1 check, then end with your three-section report.
+EOF
+}
+
+# ---------------------------------------------------------------- actions
+attempts_file() { printf '%s/attempts-%s-%s' "$STATE_DIR" "$1" "$2"; }   # <key> <sha>
+
+act_implement() {
+  local prompt report
+  set_state "$S_STORY" state:in-progress
+  prompt=$(mktemp); prompt_implement > "$prompt"
+  report=$(run_agent coder "coder-$S_STORY" "$prompt"); rm -f "$prompt"
+  snapshot
+  if [ -n "$S_PR" ] && [ "$S_DRAFT" = 0 ]; then
+    set_state "$S_STORY" state:in-review
+    log "story #$S_STORY: PR #$S_PR is ready for review"
+  else
+    block "$S_STORY" "the Coder didn't produce a ready pull request${S_PR:+ (PR #$S_PR is still a draft)}" "$report"
+  fi
+}
+
+act_review() {  # <role>
+  local role=$1 prompt report last since n f
+  set_state "$S_STORY" state:in-review
+  last=$(last_reviewed "$S_PR" "$role")
+  since=${last#* }; [ -n "$last" ] || since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  prompt=$(mktemp); prompt_review "$role" "${last%% *}" "$since" > "$prompt"
+  report=$(run_agent "$role" "review-$role-$S_PR" "$prompt"); rm -f "$prompt"
+  if ! head_checks "$S_HEAD" | grep -qE "^review/$role (success|failure|neutral)$"; then
+    f=$(attempts_file "review-$role" "$S_HEAD")
+    n=$(( $(cat "$f" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$f"
+    if [ "$n" -ge 2 ]; then
+      block "$S_STORY" "the $role reviewer didn't post review/$role on PR #$S_PR after $n runs" "$report"
+    else
+      log "review/$role not posted on ${S_HEAD:0:7}; will retry once"
+    fi
+  fi
+}
+
+act_fix() {
+  local prompt report since before
+  before=$S_HEAD
+  since=$(gh api "repos/$REPO/commits/$S_HEAD/check-runs" \
+    --jq '[.check_runs[] | select(.name | startswith("review/")) | .started_at] | min // empty')
+  prompt=$(mktemp); prompt_fix "${since:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}" > "$prompt"
+  report=$(run_agent coder "fix-$S_PR" "$prompt"); rm -f "$prompt"
+  snapshot
+  if [ "$S_HEAD" = "$before" ]; then
+    block "$S_STORY" "the Coder didn't push a fix for the review findings on PR #$S_PR" "$report"
+  fi
+}
+
+write_status() {  # <action>
+  {
+    printf 'updated: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf 'action: %s\n' "$1"
+    printf 'story: %s\n' "${S_STORY:+https://github.com/$REPO/issues/$S_STORY}"
+    printf 'pr: %s\n' "${S_PR:+https://github.com/$REPO/pull/$S_PR}"
+    printf 'checks: gate=%s qa=%s eng=%s ux=%s rounds=%s/%s\n' \
+      "${S_GATE:--}" "${S_REVIEW_qa:--}" "${S_REVIEW_eng:--}" "${S_REVIEW_ux:--}" "${S_ROUNDS:-0}" "${S_CAP:-3}"
+  } > "$STATE_DIR/status"
+}
+
+# Keep the agents' clone on the latest main, so the kit's skills and scripts
+# they load from it are current. Only fast-forwards a clean checkout of main.
+sync_clone() {
+  local branch
+  if [ -n "$(git -C "$WORK" status --porcelain --untracked-files=no)" ]; then
+    log "the clone at $WORK has uncommitted changes; not updating it"
+    return 0
+  fi
+  branch=$(git -C "$WORK" symbolic-ref --quiet --short HEAD || true)
+  # Agents work in worktrees; the clone itself should sit on main. A clean
+  # checkout left elsewhere (a detached HEAD after a review) goes back to main.
+  if [ "$branch" != main ]; then
+    git -C "$WORK" switch --quiet main 2>/dev/null || { log "could not switch the clone back to main"; return 0; }
+  fi
+  git -C "$WORK" merge --ff-only --quiet origin/main 2>/dev/null || log "could not fast-forward the clone's main"
+}
+
+# One pass: look, decide, act. Returns 0 to continue, 10 to wait, 20 when idle.
+step() {
+  local action
+  git -C "$WORK" fetch --quiet origin || log "git fetch failed; using the last fetched state"
+  sync_clone
+  load_config
+  snapshot
+  note_finished
+  [ -z "$S_STORY" ] || echo "$S_STORY" > "$STATE_DIR/current"
+  action=$(decide)
+  write_status "$action"
+  RUN_ID="loop-$(date -u +%Y%m%dT%H%M%SZ)"
+  case "$action" in
+    implement) act_implement ;;
+    "review "*) act_review "${action#review }" ;;
+    fix) act_fix ;;
+    "block "*) block "$S_STORY" "${action#block }"; return 10 ;;
+    wait-*) return 10 ;;
+    idle) return 20 ;;
+  esac
+  return 0
+}
+
+cmd_run() {
+  local rc waited=0 last=""
+  mkdir -p "$RUNS_DIR"
+  exec 9> "$LOCK_FILE"
+  flock -n 9 || die "already running (see: aipa-loop status)"
+  echo $$ > "$PID_FILE"
+  trap 'rm -f "$PID_FILE" "$STATE_DIR/activity"' EXIT
+  cd "$WORK"
+  log "work loop started for $REPO"
+  while :; do
+    rc=0; step || rc=$?
+    case "$rc" in
+      0) waited=0 ;;
+      10)
+        if [ "$(cat "$STATE_DIR/status")" != "$last" ]; then log "$(sed -n 's/^action: //p' "$STATE_DIR/status") (story ${S_STORY:-none}, PR ${S_PR:-none})"; fi
+        last=$(grep -v '^updated:' "$STATE_DIR/status")
+        [ "$waited" -lt "$MAX_WAIT" ] || { log "waited ${MAX_WAIT}s with nothing to do; exiting"; break; }
+        sleep "$POLL"; waited=$((waited + POLL))
+        ;;
+      20) log "no story is ready; exiting"; break ;;
+      *) log "step failed (exit $rc); retrying after ${POLL}s"; sleep "$POLL" ;;
+    esac
+  done
+}
+
+cmd_start() {
+  mkdir -p "$STATE_DIR"
+  if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+    echo "work loop already running (pid $(cat "$PID_FILE"))"; return 0
+  fi
+  setsid nohup "$0" run >> "$LOG_FILE" 2>&1 < /dev/null &
+  sleep 1
+  echo "work loop started (pid $(cat "$PID_FILE" 2>/dev/null || echo '?')); log: $LOG_FILE"
+}
+
+cmd_status() {
+  if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+    echo "running (pid $(cat "$PID_FILE"))"
+  else
+    echo "not running"
+  fi
+  [ -f "$STATE_DIR/activity" ] && cat "$STATE_DIR/activity"
+  [ -f "$STATE_DIR/status" ] && cat "$STATE_DIR/status"
+  if [ -f "$LOG_FILE" ]; then echo "--- recent log"; tail -n 8 "$LOG_FILE"; fi
+}
+
+cmd_stop() {
+  if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+    kill "$(cat "$PID_FILE")" && echo "stopped"
+  else
+    echo "not running"
+  fi
+}
+
+main() {
+  case "${1:-}" in
+    run) load_repo; cmd_run ;;
+    step) load_repo; mkdir -p "$RUNS_DIR"; cd "$WORK"; rc=0; step || rc=$?; cat "$STATE_DIR/status"; exit "$rc" ;;
+    start) load_repo; cmd_start ;;
+    status) cmd_status ;;
+    stop) cmd_stop ;;
+    *) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2 ;;
+  esac
+}
+
+# Run main only when executed, so tests can source the functions.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  main "$@"
+fi
