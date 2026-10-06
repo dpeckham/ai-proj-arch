@@ -76,7 +76,8 @@ RUN arch=$(dpkg --print-architecture) \
     esac \
  && fetch-verified "https://downloads.claude.ai/claude-code-releases/${CLAUDE_VERSION}/${platform}/claude" /usr/local/bin/claude "$sum" \
  && chmod 755 /usr/local/bin/claude
-ENV DISABLE_AUTOUPDATER=1
+ENV DISABLE_AUTOUPDATER=1 \
+    LANG=C.UTF-8
 
 # Wrappers and helpers that connect the tools to the read-only /run/aipa mount.
 COPY rootfs/ /

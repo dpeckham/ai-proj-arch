@@ -78,6 +78,16 @@ rt_exec_stdin() {  # <name> <user> <home> <workdir> <cmd...>
   "$AIPA_RUNTIME_BIN" exec --interactive --user "$user" --env "HOME=$home" --workdir "$dir" "$name" "$@"
 }
 
+# A TERM the container knows. Debian's base terminfo has xterm-256color,
+# tmux-256color and screen-256color but not, for example, xterm-ghostty or
+# xterm-kitty; an unknown TERM breaks full-screen programs.
+rt_term() {
+  case "${TERM:-}" in
+    xterm-256color | tmux-256color | screen-256color) printf '%s' "$TERM" ;;
+    *) printf 'xterm-256color' ;;
+  esac
+}
+
 # Replace this process with an interactive terminal session, optionally
 # passing an env file (used for the harness credentials).
 rt_exec_tty() {  # <name> <user> <home> <workdir> <env-file|""> <cmd...>
@@ -85,5 +95,5 @@ rt_exec_tty() {  # <name> <user> <home> <workdir> <env-file|""> <cmd...>
   shift 5
   [ -n "$envf" ] && envargs=(--env-file "$envf")
   exec "$AIPA_RUNTIME_BIN" exec --interactive --tty --user "$user" --env "HOME=$home" \
-    --env "TERM=${TERM:-xterm-256color}" --workdir "$dir" ${envargs[@]+"${envargs[@]}"} "$name" "$@"
+    --env "TERM=$(rt_term)" --env LANG=C.UTF-8 --workdir "$dir" ${envargs[@]+"${envargs[@]}"} "$name" "$@"
 }

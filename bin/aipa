@@ -231,11 +231,12 @@ cmd_shell() {
   else
     warn "no $AIPA_HARNESS_ENV: Claude Code will ask you to log in (see docs/container.md)"
   fi
-  # -A: attach if the session exists; -D: detach stale clients, such as one
+  # -u: UTF-8 (the container has no LANG of its own; without it tmux mangles
+  # Claude Code's box-drawing and symbols). -A: attach if the session exists; -D: detach stale clients, such as one
   # left behind by a terminal that was closed without detaching. A new session
   # starts the PM; when the PM exits you're left at a shell in the same window.
   rt_exec_tty "$name" "$AGENT_USER" "$AGENT_HOME" "$(agent_workdir)" "$envf" \
-    tmux new-session -A -D -s pm -c "$(agent_workdir)" "$(pm_command)"
+    tmux -u new-session -A -D -s pm -c "$(agent_workdir)" "$(pm_command)"
 }
 
 # ----------------------------------------------------------------------- stop
