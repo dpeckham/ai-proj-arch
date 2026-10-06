@@ -30,7 +30,8 @@ RUN_TIMEOUT=${AIPA_LOOP_RUN_TIMEOUT:-3600}
 ROLES="qa eng ux"
 READY=state:verification-ready
 
-log() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
+# Logs go to stderr, so functions whose stdout is captured can still log.
+log() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >&2; }
 die() { echo "aipa-loop: $*" >&2; exit 1; }
 
 load_repo() {
@@ -357,10 +358,23 @@ write_status() {  # <action>
   } > "$STATE_DIR/status"
 }
 
+# Keep the agents' clone on the latest main, so the kit's skills and scripts
+# they load from it are current. Only fast-forwards a clean checkout of main.
+sync_clone() {
+  local branch
+  branch=$(git -C "$WORK" symbolic-ref --quiet --short HEAD || true)
+  if [ "$branch" = main ] && [ -z "$(git -C "$WORK" status --porcelain --untracked-files=no)" ]; then
+    git -C "$WORK" merge --ff-only --quiet origin/main 2>/dev/null || log "could not fast-forward the clone's main"
+  else
+    log "the clone at $WORK is on '${branch:-a detached HEAD}' or has changes; not updating it"
+  fi
+}
+
 # One pass: look, decide, act. Returns 0 to continue, 10 to wait, 20 when idle.
 step() {
   local action
   git -C "$WORK" fetch --quiet origin || log "git fetch failed; using the last fetched state"
+  sync_clone
   load_config
   snapshot
   note_finished

@@ -107,3 +107,18 @@ EOF2
   [ "$S_STORY" = 5 ] && [ "$S_NEEDS_CEO" = 1 ]
   [ -z "$S_PR" ]
 }
+
+@test "run_agent logs to stderr and prints only the report path" {
+  STATE_DIR="$BATS_TEST_TMPDIR/state"; RUNS_DIR="$STATE_DIR/runs"; mkdir -p "$RUNS_DIR"
+  CONFIG=""
+  fake claude <<'EOF2'
+cat > /dev/null; echo '{"result":"REPORT-TEXT"}'
+EOF2
+  fake timeout <<'EOF2'
+shift; exec "$@"
+EOF2
+  p="$BATS_TEST_TMPDIR/prompt"; echo hi > "$p"
+  out=$(run_agent coder coder-1 "$p" 2>/dev/null)
+  [ -f "$out" ]
+  [ "$(cat "$out")" = REPORT-TEXT ]
+}
