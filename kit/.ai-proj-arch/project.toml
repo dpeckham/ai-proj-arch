@@ -1,0 +1,15 @@
+# ai-proj-arch project settings. Read by the work loop from main, so changes
+# take effect once merged. Provisioning creates this file once and never
+# overwrites it.
+
+[harness]
+# Which harness runs each role in the work loop: "claude" or "codex".
+coder = "claude"
+qa = "claude"
+eng = "claude"
+ux = "claude"
+
+[loop]
+# Fix rounds the Coder gets for review findings before the story is blocked
+# for the CEO.
+review_rounds = 3

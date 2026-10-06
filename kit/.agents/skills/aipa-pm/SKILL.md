@@ -27,16 +27,16 @@ Consult these as subagents. Ask a specific question and give them the story or i
 | `qa-lead` | The story's verification plan, and whether something can be tested |
 | `ux-designer` | What users see and do, consistency and usability. Include them in every brainstorm that touches UI |
 
-The **Coder** and the **reviewers** aren't subagents. The work loop runs them in the background, one story at a time, once a story is `state:verification-ready`.
+The **Coder** and the **reviewers** aren't subagents. The work loop (`aipa-loop`) runs them in the background, one story at a time, once a story is `state:verification-ready`. Which harness runs each role is set in `.ai-proj-arch/project.toml`.
 
 ## When you start a session
 
 1. Read the current state:
-    - `aipa-status show`
+    - `aipa-status show` and `aipa-loop status`
     - The Roadmap issue (label `roadmap`)
     - Open stories with `state:in-progress` or `state:in-review`
     - Open pull requests (`gh pr list`)
-2. If any story is `state:verification-ready` and the work loop isn't running, start it. (Until the work loop exists, say which stories are ready.)
+2. Make sure the work loop is running: `aipa-loop start`. It's safe to run when it already is; if no story is ready, it exits on its own.
 3. Greet the CEO with three lines at most: what finished, what's blocked or waiting on them, and what's next. Then ask what they'd like to work on.
 
 ## Brainstorming with the CEO
@@ -84,9 +84,11 @@ Change state with `gh issue edit <n> --remove-label <old> --add-label <new>`. Ke
 
 Answer from evidence, never from memory. Check, in this order:
 - `aipa-status show`
+- `aipa-loop status`: what the loop is doing right now
 - Open PRs and their checks (`gh pr list`, `gh pr checks <n>`)
 - Stories by state
-- The work loop's state, once it exists
+
+A story labeled `needs-ceo` is blocked. The loop left a comment on it saying why. Bring it to the CEO first.
 
 Lead with what needs the CEO, for example a PR ready to merge or a question. Then what finished, then what's next. Link every issue and PR you mention.
 
