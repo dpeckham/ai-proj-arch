@@ -3,7 +3,9 @@
 # overwrites it.
 
 [harness]
-# Which harness runs each role in the work loop: "claude" or "codex".
+# Which harness runs each role: "claude" or "codex". pm is the interactive
+# session `aipa shell` starts; the others run in the work loop.
+pm = "claude"
 coder = "claude"
 qa = "claude"
 eng = "claude"

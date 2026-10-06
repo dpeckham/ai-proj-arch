@@ -188,11 +188,35 @@ cmd_start() {
     fi
     aipa-sync-main || true
   ' _ "$bot_name" "$bot_email" "$workdir" "$AIPA_REPO"
+  # Interactive Claude Code otherwise runs first-time setup (theme, login
+  # screen) and asks to trust the folder and accept full-permission mode, even
+  # though the token is in the environment. The container is the sandbox.
+  # shellcheck disable=SC2016  # expanded by the container's bash
+  rt_exec "$name" "$AGENT_USER" "$AGENT_HOME" "$AGENT_HOME" bash -euo pipefail -c '
+    f=~/.claude.json; [ -s "$f" ] || echo "{}" > "$f"
+    jq --arg w "$1" ".hasCompletedOnboarding = true | .theme = (.theme // \"dark\")
+      | .projects[\$w].hasTrustDialogAccepted = true" "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+    mkdir -p ~/.claude; s=~/.claude/settings.json; [ -s "$s" ] || echo "{}" > "$s"
+    jq ".skipDangerousModePermissionPrompt = true" "$s" > "$s.tmp" && mv "$s.tmp" "$s"
+  ' _ "$workdir"
   info "agent clone: $workdir (in the container)"
   info "main checkout on the host: $AIPA_MAIN_DIR"
 }
 
 # ---------------------------------------------------------------------- shell
+PM_PROMPT="You are the PM for this project. Load the aipa-pm skill and start your session as it describes."
+
+# The PM's harness comes from [harness] pm in the project's settings on main.
+pm_command() {
+  local harness
+  harness=$(awk '/^\[harness\]/{h=1;next} /^\[/{h=0} h && $1=="pm"{gsub(/[" ]/,"",$3); print $3}' \
+    "$AIPA_MAIN_DIR/.ai-proj-arch/project.toml" 2>/dev/null)
+  case "${harness:-claude}" in
+    codex) printf 'codex --sandbox danger-full-access --ask-for-approval never %q; exec bash -l' "$PM_PROMPT" ;;
+    *) printf 'claude --permission-mode bypassPermissions %q; exec bash -l' "$PM_PROMPT" ;;
+  esac
+}
+
 cmd_shell() {
   local project=${1:-} name envf=""
   [ -n "$project" ] || die "usage: aipa shell <project>"
@@ -208,9 +232,10 @@ cmd_shell() {
     warn "no $AIPA_HARNESS_ENV: Claude Code will ask you to log in (see docs/container.md)"
   fi
   # -A: attach if the session exists; -D: detach stale clients, such as one
-  # left behind by a terminal that was closed without detaching.
+  # left behind by a terminal that was closed without detaching. A new session
+  # starts the PM; when the PM exits you're left at a shell in the same window.
   rt_exec_tty "$name" "$AGENT_USER" "$AGENT_HOME" "$(agent_workdir)" "$envf" \
-    tmux new-session -A -D -s pm -c "$(agent_workdir)"
+    tmux new-session -A -D -s pm -c "$(agent_workdir)" "$(pm_command)"
 }
 
 # ----------------------------------------------------------------------- stop
