@@ -4,7 +4,7 @@ A lightweight, portable agent suite for solopreneurs who run AI-first projects.
 
 Instead of vibe coding, the founder (as CEO) works with a **Product Manager** for each project. v1 covers a single project; a Chief of Staff across projects comes later. A team of agents does the rest: a Lead Engineer, a QA Lead, a UX/UI Designer and a Coder plan, build, verify and review the work through GitHub. Each project lives in its own repo and runs in its own container.
 
-**Status:** early. Project containers, the `start`/`shell` helpers and the token broker work on `apple/container`. Provisioning, role skills, gates and the work loop are next (see the roadmap).
+**Status:** early. Project containers, the `start`/`shell` helpers, the token broker and the GitHub gates work. Provisioning, role skills and the work loop are next (see the roadmap).
 
 ## Design goals
 
@@ -23,7 +23,7 @@ bin/aipa create <project> --repo <owner>/<name>
 bin/aipa shell <project>
 ```
 
-See [docs/container.md](docs/container.md) for setup (the bot App and harness credentials) and the security model.
+See [docs/container.md](docs/container.md) for setup (the bot App and harness credentials) and the security model, and [docs/gates.md](docs/gates.md) for how GitHub enforces the process.
 
 ## Docs
 

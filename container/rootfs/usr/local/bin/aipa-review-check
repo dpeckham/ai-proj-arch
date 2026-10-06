@@ -1,0 +1,39 @@
+#!/bin/bash
+# Post a reviewer role's verdict on a pull request as a check run, under the
+# bot's identity. These check runs are what the "aipa: protect main" ruleset
+# requires (review/qa, review/eng, review/ux), and the ruleset only accepts them
+# from the bot App, so nothing else can satisfy them.
+#
+#   aipa-review-check <qa|eng|ux> <pr-number> <success|failure|neutral> <title> [summary-file]
+#
+# The summary (Markdown) comes from the file, or from stdin when no file is given.
+# Use "neutral" for "not applicable", for example review/ux on a PR with no UI change.
+set -euo pipefail
+
+usage() { sed -n '7,10p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+[ $# -ge 4 ] || usage
+role=$1 pr=$2 conclusion=$3 title=$4 summary_file=${5:-}
+
+case "$role" in qa | eng | ux) ;; *) echo "aipa-review-check: role must be qa, eng or ux" >&2; exit 2 ;; esac
+case "$pr" in "" | *[!0-9]*) echo "aipa-review-check: pr must be a number" >&2; exit 2 ;; esac
+case "$conclusion" in success | failure | neutral) ;; *) echo "aipa-review-check: conclusion must be success, failure or neutral" >&2; exit 2 ;; esac
+
+PROJECT_FILE=${AIPA_PROJECT_FILE:-/run/aipa/project.env}
+repo=$(sed -n 's/^AIPA_REPO=\([A-Za-z0-9._-]*\/[A-Za-z0-9._-]*\)$/\1/p' "$PROJECT_FILE" 2>/dev/null || true)
+[ -n "$repo" ] || { echo "aipa-review-check: no valid AIPA_REPO in $PROJECT_FILE" >&2; exit 1; }
+
+if [ -n "$summary_file" ]; then
+  summary=$(cat "$summary_file")
+else
+  summary=$(cat)
+fi
+[ -n "$summary" ] || { echo "aipa-review-check: the summary is empty" >&2; exit 2; }
+
+sha=$(gh pr view "$pr" --repo "$repo" --json headRefOid --jq .headRefOid)
+[ -n "$sha" ] || { echo "aipa-review-check: could not resolve the head commit of #$pr" >&2; exit 1; }
+
+jq -n --arg name "review/$role" --arg sha "$sha" --arg conclusion "$conclusion" \
+      --arg title "$title" --arg summary "$summary" \
+  '{name: $name, head_sha: $sha, status: "completed", conclusion: $conclusion,
+    output: {title: $title, summary: $summary}}' \
+  | gh api -X POST "repos/$repo/check-runs" --input - --jq '"posted \(.name): \(.conclusion) on \(.head_sha[0:7])"'

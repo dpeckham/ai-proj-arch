@@ -227,3 +227,5 @@ v1 is done when one real project goes from a roadmap item to a merged PR with no
 | 2026-10-05 | yawnbooks is the first test project for provisioning. Its open issues and PRs from Paperclip stay as normal work for the new agents | CEO |
 | 2026-10-05 | Every run of the provision/update script checks for a newer kit release and asks before updating. It updates itself first, then the project | CEO |
 | 2026-10-05 | The bot GitHub App is named `<github-username>-bot` (for the CEO: the existing `dpeckham-bot`). One App per user, installed per project repo; scripts derive the name from the GitHub login | CEO |
+| 2026-10-05 | Merge model: "protect main" (PR, all checks green) has no bypass at all; "only the CEO merges" lets only the admin role update main. The CEO merges with an explicit bypass, which can never skip a red check. Verified on aipa-sandbox | CEO, on PM recommendation |
+| 2026-10-05 | `review/*` checks are accepted only from the bot App and `gate/*` only from GitHub Actions; the gate script lives under `.github/workflows/`, where the bot can't write | PM |
