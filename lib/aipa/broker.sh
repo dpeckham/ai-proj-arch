@@ -30,21 +30,32 @@ broker_mint_once() {  # <project>   (expects aipa_load_project to have run)
 broker_log() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
 
 # Run forever (launchd's job). Never prints a token.
+#
+# Wakes every AIPA_BROKER_TICK seconds and mints when the token file is
+# missing or older than AIPA_BROKER_INTERVAL by the wall clock. A single long
+# `sleep` would be wrong: on macOS it doesn't count time the Mac spends asleep,
+# so after a night's sleep the token would already have expired.
+AIPA_BROKER_TICK="${AIPA_BROKER_TICK:-30}"
+
 broker_loop() {  # <project>
-  local backoff=30
+  local backoff=0 next_try=0 age now
   aipa_load_project "$1"
-  broker_log "broker started for $AIPA_REPO (interval ${AIPA_BROKER_INTERVAL}s)"
+  broker_log "broker started for $AIPA_REPO (renew after ${AIPA_BROKER_INTERVAL}s, check every ${AIPA_BROKER_TICK}s)"
   while :; do
-    if broker_mint_once "$1"; then
-      broker_log "minted a token scoped to $AIPA_REPO"
-      backoff=30
-      sleep "$AIPA_BROKER_INTERVAL"
-    else
-      broker_log "mint failed; retrying in ${backoff}s"
-      sleep "$backoff"
-      backoff=$((backoff * 2))
-      [ "$backoff" -le 300 ] || backoff=300
+    now=$(date +%s)
+    age=$(broker_token_age "$1")
+    if { [ -z "$age" ] || [ "$age" -ge "$AIPA_BROKER_INTERVAL" ]; } && [ "$now" -ge "$next_try" ]; then
+      if broker_mint_once "$1"; then
+        broker_log "minted a token scoped to $AIPA_REPO"
+        backoff=0
+      else
+        if [ "$backoff" -eq 0 ]; then backoff=30; else backoff=$((backoff * 2)); fi
+        [ "$backoff" -le 300 ] || backoff=300
+        next_try=$((now + backoff))
+        broker_log "mint failed; retrying in ${backoff}s"
+      fi
     fi
+    sleep "$AIPA_BROKER_TICK"
   done
 }
 

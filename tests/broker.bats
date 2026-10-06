@@ -63,3 +63,19 @@ EOF2
   echo ghs_y > "$(aipa_run_dir yb)/gh-token"
   run broker_wait_for_token yb "$(( $(date +%s) - 5 ))" 2; [ "$status" -eq 0 ]
 }
+
+@test "the loop mints when the token is missing or stale by the wall clock, not before" {
+  cat > "$MINT" <<'EOF2'
+echo minted >> "$FAKE_LOG"
+echo ghs_LOOP
+EOF2
+  AIPA_BROKER_INTERVAL=2700 AIPA_BROKER_TICK=1 broker_loop yb > "$BATS_TEST_TMPDIR/loop.log" 2>&1 &
+  pid=$!
+  sleep 3
+  [ "$(grep -c minted "$FAKE_LOG")" = 1 ]            # missing -> minted once, then fresh
+  touch -t 202001010000 "$(aipa_run_dir yb)/gh-token" # simulate a token aged by sleep
+  sleep 3
+  kill "$pid"; wait "$pid" 2>/dev/null || true
+  [ "$(grep -c minted "$FAKE_LOG")" = 2 ]
+  ! grep -q ghs_ "$BATS_TEST_TMPDIR/loop.log"
+}
