@@ -255,12 +255,12 @@ run_agent() {  # <role-for-harness> <tag> <prompt-file>  -> report path on stdou
   printf 'running %s on %s since %s\n' "$tag" "$harness" "$(date -u +%H:%M)" > "$STATE_DIR/activity"
   case "$harness" in
     claude)
-      timeout "$RUN_TIMEOUT" claude -p --permission-mode bypassPermissions --output-format json \
+      timeout --kill-after=60 "$RUN_TIMEOUT" claude -p --permission-mode bypassPermissions --output-format json \
         < "$prompt" > "$base.log" 2>&1 || true
       jq -r '.result // empty' "$base.log" > "$base.report" 2>/dev/null || cp "$base.log" "$base.report"
       ;;
     codex)
-      timeout "$RUN_TIMEOUT" codex exec --sandbox danger-full-access -o "$base.report" - \
+      timeout --kill-after=60 "$RUN_TIMEOUT" codex exec --sandbox danger-full-access -o "$base.report" - \
         < "$prompt" > "$base.log" 2>&1 || true
       ;;
   esac
@@ -362,12 +362,17 @@ write_status() {  # <action>
 # they load from it are current. Only fast-forwards a clean checkout of main.
 sync_clone() {
   local branch
-  branch=$(git -C "$WORK" symbolic-ref --quiet --short HEAD || true)
-  if [ "$branch" = main ] && [ -z "$(git -C "$WORK" status --porcelain --untracked-files=no)" ]; then
-    git -C "$WORK" merge --ff-only --quiet origin/main 2>/dev/null || log "could not fast-forward the clone's main"
-  else
-    log "the clone at $WORK is on '${branch:-a detached HEAD}' or has changes; not updating it"
+  if [ -n "$(git -C "$WORK" status --porcelain --untracked-files=no)" ]; then
+    log "the clone at $WORK has uncommitted changes; not updating it"
+    return 0
   fi
+  branch=$(git -C "$WORK" symbolic-ref --quiet --short HEAD || true)
+  # Agents work in worktrees; the clone itself should sit on main. A clean
+  # checkout left elsewhere (a detached HEAD after a review) goes back to main.
+  if [ "$branch" != main ]; then
+    git -C "$WORK" switch --quiet main 2>/dev/null || { log "could not switch the clone back to main"; return 0; }
+  fi
+  git -C "$WORK" merge --ff-only --quiet origin/main 2>/dev/null || log "could not fast-forward the clone's main"
 }
 
 # One pass: look, decide, act. Returns 0 to continue, 10 to wait, 20 when idle.

@@ -113,7 +113,8 @@ Use `success` with a short summary when clean. The verdict and your threads must
 List unresolved threads and keep the ones **your role** opened (their first comment starts with your tag):
 
 ```bash
-"<skill-dir>/../../scripts/pr-threads.sh" <owner>/<repo> <n> | jq -c 'select((.body // "") | startswith("**[QA]**"))'
+# The script ends with a "result=…" status line, which isn't JSON: keep only the JSON lines.
+"<skill-dir>/../../scripts/pr-threads.sh" <owner>/<repo> <n> | grep '^{' | jq -c 'select((.body // "") | startswith("**[QA]**"))'
 ```
 
 Resolve a thread only when its finding was **actually answered**, by the new diff or a convincing reply:

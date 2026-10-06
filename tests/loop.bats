@@ -122,3 +122,29 @@ EOF2
   [ -f "$out" ]
   [ "$(cat "$out")" = REPORT-TEXT ]
 }
+
+clone_setup() {
+  export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
+  git init -q --bare -b main "$BATS_TEST_TMPDIR/remote.git"
+  git clone -q "$BATS_TEST_TMPDIR/remote.git" "$BATS_TEST_TMPDIR/seed" 2>/dev/null
+  git -C "$BATS_TEST_TMPDIR/seed" commit -q --allow-empty -m one && git -C "$BATS_TEST_TMPDIR/seed" push -q origin HEAD:main
+  WORK="$BATS_TEST_TMPDIR/work"; git clone -q "$BATS_TEST_TMPDIR/remote.git" "$WORK"
+  git -C "$BATS_TEST_TMPDIR/seed" commit -q --allow-empty -m two && git -C "$BATS_TEST_TMPDIR/seed" push -q origin HEAD:main
+  git -C "$WORK" fetch -q origin
+}
+
+@test "sync_clone fast-forwards main, and brings a clean detached clone back to main" {
+  clone_setup
+  git -C "$WORK" switch -q --detach HEAD
+  sync_clone 2>/dev/null
+  [ "$(git -C "$WORK" symbolic-ref --short HEAD)" = main ]
+  [ "$(git -C "$WORK" log -1 --format=%s)" = two ]
+}
+
+@test "sync_clone leaves a clone with uncommitted changes alone" {
+  clone_setup
+  echo x > "$WORK/f"; git -C "$WORK" add f
+  run sync_clone
+  [[ "$output" == *"uncommitted changes"* ]]
+  [ "$(git -C "$WORK" log -1 --format=%s)" = one ]
+}
