@@ -1,0 +1,103 @@
+#!/bin/bash
+# Read or update STATUS.md on the project's `status` branch.
+#
+#   aipa-status show
+#   aipa-status set <recently-finished|blockers|coming-up> <file|->
+#
+# `set` replaces one section's content (between its aipa:begin/aipa:end
+# markers), updates the "Updated:" line, commits as the current git identity
+# and pushes. If someone else pushed meanwhile it re-fetches and re-applies,
+# so the work loop and the PM can update their own sections concurrently.
+# The `status` branch is created from the kit template on first use.
+set -euo pipefail
+
+REPO_DIR=${AIPA_REPO_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}
+REMOTE=${AIPA_STATUS_REMOTE:-origin}
+BRANCH=status
+TEMPLATE=${AIPA_STATUS_TEMPLATE:-/usr/local/share/aipa/STATUS.md}
+
+die() { echo "aipa-status: $*" >&2; exit 1; }
+
+fetch_status() {  # sets $have to 1 if the remote branch exists
+  if git -C "$REPO_DIR" fetch --quiet "$REMOTE" "+refs/heads/$BRANCH:refs/remotes/$REMOTE/$BRANCH" 2>/dev/null; then
+    have=1
+  else
+    have=0
+  fi
+}
+
+cmd_show() {
+  local have
+  fetch_status
+  [ "$have" = 1 ] || die "no '$BRANCH' branch yet"
+  git -C "$REPO_DIR" show "refs/remotes/$REMOTE/$BRANCH:STATUS.md"
+}
+
+# Replace the lines between the section's markers with the content file.
+replace_section() {  # <status-file> <section> <content-file>
+  awk -v sec="$2" -v content="$3" '
+    BEGIN { while ((getline line < content) > 0) body = body line "\n" }
+    index($0, "<!-- aipa:begin " sec " ") == 1 || $0 == "<!-- aipa:begin " sec " -->" {
+      print; printf "%s", body; skipping = 1; found = 1; next
+    }
+    skipping && $0 == "<!-- aipa:end " sec " -->" { skipping = 0 }
+    !skipping { print }
+    END { if (!found || skipping) exit 3 }
+  ' "$1"
+}
+
+cmd_set() {
+  # content and work are global: the EXIT trap uses them after we return.
+  local section=$1 src=$2 tmp have attempt who now
+  case "$section" in recently-finished | blockers | coming-up) ;; *) die "unknown section '$section'" ;; esac
+  content=$(mktemp)
+  if [ "$src" = - ]; then cat > "$content"; else cat "$src" > "$content"; fi
+  [ -s "$content" ] || die "the new content for '$section' is empty"
+  grep -q 'aipa:\(begin\|end\)' "$content" && die "content may not contain aipa markers"
+
+  who=$(git -C "$REPO_DIR" config user.name || echo unknown)
+  work=$(mktemp -d)
+  trap 'git -C "$REPO_DIR" worktree remove --force "$work" >/dev/null 2>&1 || true; rm -rf "$work" "$content"' EXIT
+
+  for attempt in 1 2 3 4 5; do
+    fetch_status
+    git -C "$REPO_DIR" worktree remove --force "$work" >/dev/null 2>&1 || true
+    rm -rf "$work"
+    if [ "$have" = 1 ]; then
+      git -C "$REPO_DIR" worktree add --quiet --detach "$work" "refs/remotes/$REMOTE/$BRANCH"
+    else
+      [ -r "$TEMPLATE" ] || die "no '$BRANCH' branch and no template at $TEMPLATE"
+      git -C "$REPO_DIR" worktree add --quiet --detach "$work" HEAD
+      git -C "$work" switch --quiet --orphan "aipa-status-tmp-$$"
+      git -C "$work" rm -rq --cached . >/dev/null 2>&1 || true
+      find "$work" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+      cp "$TEMPLATE" "$work/STATUS.md"
+    fi
+
+    tmp=$(mktemp)
+    replace_section "$work/STATUS.md" "$section" "$content" > "$tmp" \
+      || { rm -f "$tmp"; die "STATUS.md has no complete '$section' section"; }
+    now=$(date -u '+%Y-%m-%d %H:%M UTC')
+    sed "s/^Updated: .*/Updated: $now · $who/" "$tmp" > "$work/STATUS.md"
+    rm -f "$tmp"
+
+    git -C "$work" add STATUS.md
+    if git -C "$work" diff --cached --quiet; then
+      echo "STATUS.md: $section unchanged"
+      return 0
+    fi
+    git -C "$work" commit --quiet -m "Status: update $section"
+    if git -C "$work" push --quiet "$REMOTE" "HEAD:refs/heads/$BRANCH" 2>/dev/null; then
+      echo "STATUS.md: updated $section"
+      return 0
+    fi
+    sleep "$attempt"
+  done
+  die "could not push to '$BRANCH' after 5 attempts"
+}
+
+case "${1:-}" in
+  show) cmd_show ;;
+  set) [ $# -eq 3 ] || die "usage: aipa-status set <section> <file|->"; cmd_set "$2" "$3" ;;
+  *) sed -n '2,6p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2 ;;
+esac
