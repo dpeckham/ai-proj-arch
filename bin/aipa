@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # aipa: run an ai-proj-arch project in its own container.
 #
+#   aipa provision <project> --repo <owner>/<name> [--main-dir <dir>] [--check <ci-job>]...
+#                  [--dry-run] [--no-update-check]
+#                                      set up a project, or update it to this kit version
 #   aipa build-image [--no-cache]      build the agent image for this kit version
-#   aipa create <project> --repo <owner>/<name> [--main-dir <dir>]
+#   aipa create <project> --repo <owner>/<name> [--main-dir <dir>] [--recreate]
 #                                      set up the host checkout, volume and container
 #   aipa start <project>               start the container and its token broker
 #   aipa shell <project>               open the PM's tmux session (starts if needed)
@@ -23,12 +26,16 @@ AIPA_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$AIPA_ROOT/lib/aipa/runtime.sh"
 # shellcheck source=../lib/aipa/broker.sh
 . "$AIPA_ROOT/lib/aipa/broker.sh"
+# shellcheck source=../lib/aipa/kit.sh
+. "$AIPA_ROOT/lib/aipa/kit.sh"
+# shellcheck source=../lib/aipa/provision.sh
+. "$AIPA_ROOT/lib/aipa/provision.sh"
 
 AGENT_USER=agent
 AGENT_HOME=/home/agent
 TOKEN_MAX_AGE=3000   # seconds; tokens live 3600, the broker renews at 2700
 
-usage() { sed -n '2,12p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,15p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
 agent_workdir() { printf '%s/work/%s' "$AGENT_HOME" "$AIPA_REPO_NAME"; }
 
@@ -51,13 +58,14 @@ cmd_build_image() {
 
 # --------------------------------------------------------------------- create
 cmd_create() {
-  local project=${1:-} repo="" main_dir="" file existing name state
+  local project=${1:-} repo="" main_dir="" file existing name state recreate=0 want have
   [ -n "$project" ] || die "usage: aipa create <project> --repo <owner>/<name> [--main-dir <dir>]"
   shift
   while [ $# -gt 0 ]; do
     case "$1" in
       --repo) repo=${2:-}; shift 2 ;;
       --main-dir) main_dir=${2:-}; shift 2 ;;
+      --recreate) recreate=1; shift ;;
       *) die "unknown option: $1" ;;
     esac
   done
@@ -98,6 +106,19 @@ cmd_create() {
 
   name=$(aipa_container_name "$project")
   state=$(rt_container_state "$name")
+  if [ "$state" != absent ]; then
+    want=$(rt_image_digest "$(aipa_image_ref)"); have=$(rt_container_image_digest "$name")
+    if [ -n "$want" ] && [ "$want" != "$have" ]; then
+      if [ "$recreate" = 1 ]; then
+        [ "$state" = running ] && rt_stop "$name"
+        rt_delete "$name"
+        info "recreating $name on the current image (its home volume is kept)"
+        state=absent
+      else
+        warn "$name was created from an older image. Recreate it (keeps the home volume; stops anything running in it): aipa create $project --recreate"
+      fi
+    fi
+  fi
   if [ "$state" = absent ]; then
     rt_create "$name" "$(aipa_image_ref)" "ai-proj-arch.project=$project" \
       "$AIPA_MAIN_DIR:/work/main" \
@@ -167,11 +188,35 @@ cmd_start() {
     fi
     aipa-sync-main || true
   ' _ "$bot_name" "$bot_email" "$workdir" "$AIPA_REPO"
+  # Interactive Claude Code otherwise runs first-time setup (theme, login
+  # screen) and asks to trust the folder and accept full-permission mode, even
+  # though the token is in the environment. The container is the sandbox.
+  # shellcheck disable=SC2016  # expanded by the container's bash
+  rt_exec "$name" "$AGENT_USER" "$AGENT_HOME" "$AGENT_HOME" bash -euo pipefail -c '
+    f=~/.claude.json; [ -s "$f" ] || echo "{}" > "$f"
+    jq --arg w "$1" ".hasCompletedOnboarding = true | .theme = (.theme // \"dark\")
+      | .projects[\$w].hasTrustDialogAccepted = true" "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+    mkdir -p ~/.claude; s=~/.claude/settings.json; [ -s "$s" ] || echo "{}" > "$s"
+    jq ".skipDangerousModePermissionPrompt = true" "$s" > "$s.tmp" && mv "$s.tmp" "$s"
+  ' _ "$workdir"
   info "agent clone: $workdir (in the container)"
   info "main checkout on the host: $AIPA_MAIN_DIR"
 }
 
 # ---------------------------------------------------------------------- shell
+PM_PROMPT="You are the PM for this project. Load the aipa-pm skill and start your session as it describes."
+
+# The PM's harness comes from [harness] pm in the project's settings on main.
+pm_command() {
+  local harness
+  harness=$(awk '/^\[harness\]/{h=1;next} /^\[/{h=0} h && $1=="pm"{gsub(/[" ]/,"",$3); print $3}' \
+    "$AIPA_MAIN_DIR/.ai-proj-arch/project.toml" 2>/dev/null)
+  case "${harness:-claude}" in
+    codex) printf 'codex --sandbox danger-full-access --ask-for-approval never %q; exec bash -l' "$PM_PROMPT" ;;
+    *) printf 'claude --permission-mode bypassPermissions %q; exec bash -l' "$PM_PROMPT" ;;
+  esac
+}
+
 cmd_shell() {
   local project=${1:-} name envf=""
   [ -n "$project" ] || die "usage: aipa shell <project>"
@@ -187,9 +232,10 @@ cmd_shell() {
     warn "no $AIPA_HARNESS_ENV: Claude Code will ask you to log in (see docs/container.md)"
   fi
   # -A: attach if the session exists; -D: detach stale clients, such as one
-  # left behind by a terminal that was closed without detaching.
+  # left behind by a terminal that was closed without detaching. A new session
+  # starts the PM; when the PM exits you're left at a shell in the same window.
   rt_exec_tty "$name" "$AGENT_USER" "$AGENT_HOME" "$(agent_workdir)" "$envf" \
-    tmux new-session -A -D -s pm -c "$(agent_workdir)"
+    tmux new-session -A -D -s pm -c "$(agent_workdir)" "$(pm_command)"
 }
 
 # ----------------------------------------------------------------------- stop
@@ -221,6 +267,43 @@ cmd_status() {
   printf 'main        %s\n' "$AIPA_MAIN_DIR"
 }
 
+# ------------------------------------------------------------------ provision
+# Idempotent: every step checks first. Order matters on a first install: the
+# kit (with the gate workflow) lands on the default branch before the rulesets
+# that would otherwise require reviews for that very commit.
+cmd_provision() {
+  local project=${1:-} repo="" main_args=() check_args=() file
+  local orig_args=("$@")
+  [ -n "$project" ] || die "usage: aipa provision <project> --repo <owner>/<name> [--main-dir <dir>] [--check <ci-job>]... [--dry-run] [--no-update-check]"
+  shift
+  PROV_DRY_RUN=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --repo) repo=${2:-}; shift 2 ;;
+      --main-dir) main_args=(--main-dir "${2:-}"); shift 2 ;;
+      --check) check_args+=(--check "${2:-}"); shift 2 ;;
+      --dry-run) PROV_DRY_RUN=1; shift ;;
+      --no-update-check) AIPA_NO_UPDATE_CHECK=1; shift ;;
+      *) die "unknown option: $1" ;;
+    esac
+  done
+  aipa_validate_project "$project"
+  file=$(aipa_project_file "$project")
+  [ -n "$repo" ] || repo=$(aipa_config_get "$file" AIPA_REPO)
+  case "$repo" in */*) ;; *) die "--repo <owner>/<name> is required for a new project" ;; esac
+  KIT_ROOT=$AIPA_ROOT
+  prov_version_check "$AIPA_ROOT" "${orig_args[@]}"
+  echo "ai-proj-arch $(aipa_kit_version): provisioning $project ($repo)$( [ "$PROV_DRY_RUN" = 1 ] && echo ', dry run')"
+  prov_preflight "$repo"
+  prov_kit "$repo"
+  prov_gates "$repo" ${check_args[@]+"${check_args[@]}"}
+  prov_status_branch "$repo"
+  prov_host "$project" "$repo" ${main_args[@]+"${main_args[@]}"}
+  printf '
+Done. Next: bin/aipa shell %s
+' "$project"
+}
+
 # ----------------------------------------------------------------------- loop
 cmd_loop() {
   local project=${1:-} sub=${2:-status} name envargs=()
@@ -241,6 +324,7 @@ main() {
   local cmd=${1:-help}
   [ $# -gt 0 ] && shift
   case "$cmd" in
+    provision) cmd_provision "$@" ;;
     build-image) cmd_build_image "$@" ;;
     create) cmd_create "$@" ;;
     start) cmd_start "$@" ;;

@@ -32,6 +32,11 @@ rt_container_state() {  # <name>
 
 rt_image_exists() { "$AIPA_RUNTIME_BIN" image inspect "$1" >/dev/null 2>&1; }
 
+# Content digests: an image's, and the one a container was created from. They
+# differ when the image was rebuilt after the container was created.
+rt_image_digest() { "$AIPA_RUNTIME_BIN" image inspect "$1" 2>/dev/null | jq -r '.[0].configuration.descriptor.digest // empty'; }
+rt_container_image_digest() { "$AIPA_RUNTIME_BIN" inspect "$1" 2>/dev/null | jq -r '.[0].configuration.image.descriptor.digest // empty'; }
+
 rt_build_image() {  # <ref> <context-dir> <containerfile> <no-cache:0|1> [build-arg ...]
   local ref=$1 ctx=$2 file=$3 nocache=$4 args=() kv
   shift 4
